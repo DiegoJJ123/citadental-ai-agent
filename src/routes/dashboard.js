@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const express = require('express');
 const auth = require('../services/auth');
 const calendar = require('../services/calendar');
+const db = require('../db/db');
 const { getDashboardStats } = require('../services/stats');
 
 const router = express.Router();
@@ -85,6 +86,19 @@ function dashboardPage() {
       <h2>Últimos leads de demo</h2>
       <div id="leads"></div>
     </section>
+    <section>
+      <h2>Resetear conversación de WhatsApp</h2>
+      <p style="color:#94a3b8; font-size:13px; margin-bottom:12px;">
+        Si un número se quedó "atascado" respondiendo como si fuera la clínica (o en cualquier otro modo raro),
+        borra su historial aquí para que la próxima respuesta empiece de cero con el comportamiento actual del bot.
+      </p>
+      <div style="display:flex; gap:8px; max-width:420px;">
+        <input id="resetPhone" type="text" placeholder="Número en formato 34600000000"
+          style="flex:1; padding:10px 12px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:#e2e8f0;" />
+        <button id="resetBtn" style="padding:10px 16px; border-radius:8px; border:none; background:#2563eb; color:#fff; font-weight:600; cursor:pointer;">Resetear</button>
+      </div>
+      <div id="resetMsg" style="margin-top:10px; font-size:13px;"></div>
+    </section>
   </main>
   <script>
     async function load() {
@@ -127,6 +141,32 @@ function dashboardPage() {
         : '<div class="empty">Todavía no hay leads registrados.</div>';
     }
     load();
+
+    document.getElementById('resetBtn').addEventListener('click', async () => {
+      const phone = document.getElementById('resetPhone').value.trim();
+      const msgEl = document.getElementById('resetMsg');
+      if (!phone) {
+        msgEl.style.color = '#fca5a5';
+        msgEl.textContent = 'Escribe un número primero.';
+        return;
+      }
+      msgEl.style.color = '#94a3b8';
+      msgEl.textContent = 'Reseteando...';
+      const res = await fetch('/api/reset-conversation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ phone }),
+      });
+      if (res.ok) {
+        msgEl.style.color = '#4ade80';
+        msgEl.textContent = 'Listo. El próximo mensaje de ese número empezará de cero.';
+        document.getElementById('resetPhone').value = '';
+      } else {
+        msgEl.style.color = '#fca5a5';
+        msgEl.textContent = 'Error al resetear. Inténtalo de nuevo.';
+      }
+    });
   </script>
 </body>
 </html>`;
@@ -219,6 +259,19 @@ router.get('/api/stats', (req, res) => {
     return res.status(401).json({ error: 'No autenticado' });
   }
   res.json(getDashboardStats());
+});
+
+router.post('/api/reset-conversation', express.json(), (req, res) => {
+  const email = auth.getSessionEmail(req);
+  if (!email || !auth.isAllowedEmail(email)) {
+    return res.status(401).json({ error: 'No autenticado' });
+  }
+  const phone = (req.body?.phone || '').replace(/\D/g, '');
+  if (!phone) {
+    return res.status(400).json({ error: 'Falta el número de teléfono' });
+  }
+  db.prepare('DELETE FROM conversations WHERE phone = ?').run(phone);
+  res.json({ ok: true });
 });
 
 module.exports = router;
