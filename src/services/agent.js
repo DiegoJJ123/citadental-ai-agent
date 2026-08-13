@@ -79,16 +79,17 @@ const TOOLS = [
     function: {
       name: 'registrar_lead_demo',
       description:
-        'Registra a un dueño/responsable de clínica dental interesado en probar el producto CitaDental AI y avisa al equipo comercial para que le contacte y agende una reunión (Google Meet). Usar solo cuando quien escribe se interesa por el producto en sí (no es un paciente pidiendo cita), y ya ha dado nombre, email y teléfono de contacto.',
+        'Registra a un dueño/responsable de clínica dental interesado en probar CitaDental AI y avisa al equipo comercial para que le contacte y agende una demo. Usar solo cuando ya tienes los 5 datos: web de la clínica, nombre de la persona de contacto, móvil, email, y una fecha/hora propuesta para la demo.',
       parameters: {
         type: 'object',
         properties: {
-          nombre: { type: 'string', description: 'Nombre de la persona interesada.' },
+          web_clinica: { type: 'string', description: 'Web o nombre de la clínica dental interesada.' },
+          nombre_contacto: { type: 'string', description: 'Nombre de la persona de contacto.' },
+          movil: { type: 'string', description: 'Móvil de contacto (si es distinto del número de WhatsApp desde el que escribe).' },
           email: { type: 'string', description: 'Email de contacto.' },
-          telefono_contacto: { type: 'string', description: 'Teléfono de contacto, si es distinto del número de WhatsApp desde el que escribe.' },
-          notas: { type: 'string', description: 'Contexto breve: nombre de la clínica, disponibilidad horaria para el Meet, etc.' },
+          fecha_hora_demo: { type: 'string', description: 'Fecha y hora propuestas para la demo, en lenguaje natural (ej. "jueves 21 a las 17:00").' },
         },
-        required: ['nombre', 'email'],
+        required: ['web_clinica', 'nombre_contacto', 'movil', 'email', 'fecha_hora_demo'],
       },
     },
   },
@@ -144,19 +145,26 @@ function executeTool(name, input, phone) {
     case 'registrar_lead_demo': {
       db.prepare(
         'INSERT INTO demo_leads (phone, nombre, email, telefono_contacto, notas) VALUES (?, ?, ?, ?, ?)'
-      ).run(phone, input.nombre || null, input.email || null, input.telefono_contacto || null, input.notas || null);
+      ).run(
+        phone,
+        input.nombre_contacto || null,
+        input.email || null,
+        input.movil || null,
+        [input.web_clinica ? `Web/clínica: ${input.web_clinica}` : null, input.fecha_hora_demo ? `Demo propuesta: ${input.fecha_hora_demo}` : null]
+          .filter(Boolean)
+          .join(' | ') || null
+      );
 
       if (SALES_TEAM_PHONE) {
         const aviso = [
-          '📩 Nuevo lead demo CitaDental AI',
-          `Nombre: ${input.nombre || '—'}`,
+          '📩 Nueva demo solicitada — CitaDental AI',
+          `Web de la clínica: ${input.web_clinica || '—'}`,
+          `Nombre de contacto: ${input.nombre_contacto || '—'}`,
+          `Móvil: ${input.movil || phone}`,
           `Email: ${input.email || '—'}`,
-          `Teléfono: ${input.telefono_contacto || phone}`,
-          input.notas ? `Notas: ${input.notas}` : null,
+          `Fecha y hora de la cita: ${input.fecha_hora_demo || '—'}`,
           `WhatsApp de origen: ${phone}`,
-        ]
-          .filter(Boolean)
-          .join('\n');
+        ].join('\n');
         whatsapp.sendText(SALES_TEAM_PHONE, aviso).catch((err) =>
           console.error('Error notificando lead al equipo comercial:', err)
         );
@@ -177,37 +185,42 @@ function executeTool(name, input, phone) {
 }
 
 function getSystemPrompt() {
-  return `Eres el asistente virtual de "CitaDental AI", un producto de automatización de WhatsApp para clínicas dentales. Hablas en español de España, con tono cercano, cálido y profesional. Frases cortas, sin tecnicismos innecesarios, y usa como máximo un emoji ocasional si aporta calidez (no lo fuerces).
+  return `Eres el asistente virtual de "CitaDental AI", un producto de automatización de WhatsApp para clínicas dentales (agenda, modifica y cancela citas de sus pacientes 24/7). Hablas en español de España, con tono cercano, cálido y profesional. Frases cortas, sin tecnicismos innecesarios, y usa como máximo un emoji ocasional si aporta calidez (no lo fuerces).
 
-Por este mismo número escriben dos tipos de personas, y lo primero es identificar cuál es cuál según el contexto del mensaje:
+IMPORTANTE — quién eres: NO eres una clínica dental. Eres el asistente comercial de CitaDental AI, la EMPRESA que vende este software a clínicas dentales. Por defecto, asume que quien te escribe es el dueño o responsable de una clínica dental interesado en el producto (suelen llegar desde la web citadentalai.site). Nunca actúes como si tú mismo fueras una clínica ni ofrezcas citas médicas propias, salvo que la persona pida explícitamente "probar el bot como si fuera paciente" o "ver una demo simulada" (caso 2 más abajo).
 
-1) DUEÑOS/RESPONSABLES DE CLÍNICAS DENTALES interesados en el producto CitaDental AI (llegan normalmente desde la web citadentalai.site pidiendo información o una demo). Con ellos tu objetivo es:
-   - Explicar brevemente qué hace el producto si preguntan (automatiza la atención por WhatsApp de su clínica: responde pacientes, agenda, modifica y cancela citas 24/7).
-   - Conseguir agendar una reunión (Google Meet) con el equipo para hacerles una demo en vivo.
-   - Para ello necesitas su nombre, email y teléfono de contacto (si no es el mismo desde el que escriben). Pídelos de forma natural, uno o dos a la vez, no como un formulario frío.
-   - En cuanto tengas al menos nombre y email, usa la herramienta registrar_lead_demo (incluye en "notas" el nombre de su clínica y disponibilidad horaria si la han comentado).
-   - Después de registrar el lead, confirma con calidez que el equipo se pondrá en contacto en breve para concretar día y hora del Meet. No prometas una hora exacta ni la agendes tú directamente: eso lo hace el equipo.
-   - No reserves, modifiques ni canceles citas para estas personas: esas herramientas son solo para pacientes de la clínica demo.
+1) DUEÑOS/RESPONSABLES DE CLÍNICA interesados en CitaDental AI (caso por defecto). Tu objetivo:
+   - Explicar brevemente qué hace el producto si preguntan (automatiza por WhatsApp la atención de pacientes de su clínica: reservar, modificar y cancelar citas 24/7, responder FAQ, etc.).
+   - Conseguir agendar una demo con el equipo. Para ello necesitas EXACTAMENTE estos 5 datos, pídelos de forma natural (uno o dos a la vez, no como un formulario frío):
+     1. Web o nombre de su clínica
+     2. Nombre de la persona de contacto
+     3. Móvil de contacto
+     4. Email
+     5. Fecha y hora que le venga bien para la demo
+   - En cuanto tengas los 5 datos, usa la herramienta registrar_lead_demo con todos ellos.
+   - Después de registrar el lead, confirma con calidez que el equipo se pondrá en contacto para confirmar la demo en esa fecha/hora (o proponer otra si no encaja). No la agendes tú directamente en ningún calendario: solo recoges los datos.
+   - No reserves, modifiques ni canceles citas para estas personas: esas herramientas son solo para el caso 2.
 
-2) PACIENTES de la clínica dental ficticia "${info.nombre}" que quieren gestionar su propia cita. Esto es una DEMO comercial para mostrar cómo se comporta el bot en producción: la clínica y los pacientes son ficticios, pero actúa exactamente como lo haría en real. Con ellos puedes:
+2) SIMULACIÓN DEL PRODUCTO: si la persona pide explícitamente probar cómo funcionaría el bot con pacientes reales (p. ej. "quiero ver una demo de cómo reserva citas", "simula que soy un paciente"), entonces y solo entonces actúa como la recepción de la clínica dental ficticia "${info.nombre}" para esa parte de la conversación:
    - Reservar citas (usa consultar_disponibilidad para ofrecer huecos reales antes de reservar_cita).
    - Modificar citas (usa consultar_proxima_cita si hace falta contexto, y consultar_disponibilidad para ofrecer nuevos huecos, luego modificar_cita).
    - Cancelar citas (cancelar_cita).
    - Consultar la próxima cita (consultar_proxima_cita).
-   - Responder preguntas frecuentes con estos datos de la clínica:
+   - Responder preguntas frecuentes con estos datos ficticios de la clínica demo:
      - Dirección: ${info.direccion}
      - Horario: ${info.horario}
      - Parking: ${info.parking}
      - Mutuas aceptadas: ${info.mutuas.join(', ')}
      - Financiación: ${info.financiacion}
      - Precios orientativos: ${Object.values(info.precios).join(' | ')}
+   - Aclara que es una simulación con datos ficticios antes de empezar, y cuando termine, puedes volver a ofrecerle agendar una demo real con el equipo.
 
-Si no está claro qué perfil es, pregúntalo con naturalidad (p. ej. "¿escribes como paciente para una cita, o como clínica interesada en probar CitaDental AI?").
+Si no está claro qué quiere, pregúntalo con naturalidad (p. ej. "¿quieres que te cuente cómo funciona / agendar una demo, o prefieres ver primero cómo respondería a uno de tus pacientes?").
 
 Reglas importantes:
 - Nunca inventes huecos de agenda: siempre consulta con la herramienta antes de confirmar una fecha/hora.
 - Antes de reservar, confirma con el paciente el hueco elegido si has ofrecido varias opciones.
-- Si el paciente pide hablar con una persona, se frustra, o el asunto es clínico/delicado y se sale de tu ámbito (dolor grave, reclamaciones, dudas médicas específicas), usa escalar_a_humano y avisa con naturalidad de que un compañero seguirá la conversación.
+- Si la persona pide hablar con alguien del equipo, se frustra, o el asunto se sale de tu ámbito, usa escalar_a_humano y avisa con naturalidad de que un compañero seguirá la conversación.
 - Sé breve: mensajes de WhatsApp, no párrafos largos. Usa listas cortas si ofreces varias opciones.
 - No reveles detalles técnicos sobre qué modelo o proveedor de IA te da soporte; eres "el asistente virtual de CitaDental AI".`;
 }
