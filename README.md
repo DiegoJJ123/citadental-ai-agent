@@ -4,9 +4,14 @@ Asistente de IA que hace de recepción de una clínica dental ficticia por Whats
 
 ## Qué hace
 
-- Reserva, modifica y cancela citas contra una agenda simulada (SQLite con huecos ficticios de los próximos 14 días laborables).
-- Consulta la próxima cita del paciente.
-- Responde FAQ de la clínica (precios, ubicación, parking, mutuas, financiación) — datos ficticios en `src/services/clinicInfo.js`.
+Por el mismo número atiende a dos tipos de personas:
+
+- **Dueños de clínica interesados en el producto** (llegan desde el botón de WhatsApp de citadentalai.site): el bot pide nombre, email y teléfono, registra el lead (tabla `demo_leads`) y avisa por WhatsApp al equipo comercial (`SALES_TEAM_PHONE`) para que agende un Google Meet con ellos. El bot no agenda el Meet directamente, solo capta el lead y notifica.
+- **Pacientes de la clínica dental ficticia** (demo del producto en sí):
+  - Reserva, modifica y cancela citas contra una agenda simulada (SQLite con huecos ficticios de los próximos 14 días laborables).
+  - Consulta la próxima cita del paciente.
+  - Responde FAQ de la clínica (precios, ubicación, parking, mutuas, financiación) — datos ficticios en `src/services/clinicInfo.js`.
+
 - Escala a un humano cuando el caso lo requiere (marca la conversación y deja de responder automáticamente).
 - 24/7, responde en segundos, tono cercano y profesional en español de España.
 

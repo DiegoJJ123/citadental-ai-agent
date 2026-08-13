@@ -64,6 +64,16 @@ CREATE TABLE IF NOT EXISTS conversations (
   escalated INTEGER DEFAULT 0,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS demo_leads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone TEXT NOT NULL,
+  nombre TEXT,
+  email TEXT,
+  telefono_contacto TEXT,
+  notas TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 `);
 
 module.exports = db;
