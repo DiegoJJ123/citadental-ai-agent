@@ -3,6 +3,7 @@ const db = require('../db/db');
 const clinic = require('./clinic');
 const info = require('./clinicInfo');
 const whatsapp = require('./whatsapp');
+const calendar = require('./calendar');
 
 const SALES_TEAM_PHONE = process.env.SALES_TEAM_PHONE;
 
@@ -88,8 +89,13 @@ const TOOLS = [
           movil: { type: 'string', description: 'Móvil de contacto (si es distinto del número de WhatsApp desde el que escribe).' },
           email: { type: 'string', description: 'Email de contacto.' },
           fecha_hora_demo: { type: 'string', description: 'Fecha y hora propuestas para la demo, en lenguaje natural (ej. "jueves 21 a las 17:00").' },
+          fecha_hora_iso: {
+            type: 'string',
+            description:
+              'La misma fecha/hora de la demo, calculada por ti en formato ISO 8601 con offset horario de España (Europe/Madrid), ej. "2026-08-21T17:00:00+02:00". Usa la fecha de hoy (te la doy en tus instrucciones) para resolver expresiones relativas como "el jueves" o "mañana".',
+          },
         },
-        required: ['web_clinica', 'nombre_contacto', 'movil', 'email', 'fecha_hora_demo'],
+        required: ['web_clinica', 'nombre_contacto', 'movil', 'email', 'fecha_hora_demo', 'fecha_hora_iso'],
       },
     },
   },
@@ -115,7 +121,7 @@ function formatSlot(slot) {
   return `${dias[d.getDay()]} ${slot.date} a las ${slot.time} (${slot.treatment})`;
 }
 
-function executeTool(name, input, phone) {
+async function executeTool(name, input, phone) {
   switch (name) {
     case 'consultar_disponibilidad': {
       const slots = clinic.listAvailableSlots({ date: input.fecha, treatment: input.tratamiento });
@@ -143,8 +149,28 @@ function executeTool(name, input, phone) {
       return { ok: true, nueva_cita: formatSlot(r.slot) };
     }
     case 'registrar_lead_demo': {
+      let calendarEvent = null;
+      if (input.fecha_hora_iso) {
+        try {
+          calendarEvent = await calendar.createDemoEvent({
+            summary: `Demo CitaDental AI — ${input.web_clinica || input.nombre_contacto}`,
+            description: [
+              `Contacto: ${input.nombre_contacto || '—'}`,
+              `Clínica: ${input.web_clinica || '—'}`,
+              `Móvil: ${input.movil || phone}`,
+              `Email: ${input.email || '—'}`,
+              `WhatsApp de origen: ${phone}`,
+            ].join('\n'),
+            startISO: input.fecha_hora_iso,
+            attendeeEmail: input.email,
+          });
+        } catch (err) {
+          console.error('Error creando evento de Google Calendar:', err);
+        }
+      }
+
       db.prepare(
-        'INSERT INTO demo_leads (phone, nombre, email, telefono_contacto, notas) VALUES (?, ?, ?, ?, ?)'
+        'INSERT INTO demo_leads (phone, nombre, email, telefono_contacto, notas, fecha_hora_iso, calendar_event_link) VALUES (?, ?, ?, ?, ?, ?, ?)'
       ).run(
         phone,
         input.nombre_contacto || null,
@@ -152,7 +178,9 @@ function executeTool(name, input, phone) {
         input.movil || null,
         [input.web_clinica ? `Web/clínica: ${input.web_clinica}` : null, input.fecha_hora_demo ? `Demo propuesta: ${input.fecha_hora_demo}` : null]
           .filter(Boolean)
-          .join(' | ') || null
+          .join(' | ') || null,
+        input.fecha_hora_iso || null,
+        calendarEvent?.eventLink || null
       );
 
       if (SALES_TEAM_PHONE) {
@@ -164,7 +192,11 @@ function executeTool(name, input, phone) {
           `Email: ${input.email || '—'}`,
           `Fecha y hora de la cita: ${input.fecha_hora_demo || '—'}`,
           `WhatsApp de origen: ${phone}`,
-        ].join('\n');
+          calendarEvent?.meetLink ? `Google Meet: ${calendarEvent.meetLink}` : null,
+          calendarEvent ? null : '⚠️ No se pudo crear el evento en Google Calendar automáticamente.',
+        ]
+          .filter(Boolean)
+          .join('\n');
         whatsapp.sendText(SALES_TEAM_PHONE, aviso).catch((err) =>
           console.error('Error notificando lead al equipo comercial:', err)
         );
@@ -185,7 +217,17 @@ function executeTool(name, input, phone) {
 }
 
 function getSystemPrompt() {
-  return `Eres el asistente virtual de "CitaDental AI", un producto de automatización de WhatsApp para clínicas dentales (agenda, modifica y cancela citas de sus pacientes 24/7). Hablas en español de España, con tono cercano, cálido y profesional. Frases cortas, sin tecnicismos innecesarios, y usa como máximo un emoji ocasional si aporta calidez (no lo fuerces).
+  const hoy = new Date().toLocaleDateString('es-ES', {
+    timeZone: 'Europe/Madrid',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
+  return `Hoy es ${hoy} (hora de España, Europe/Madrid). Usa esta fecha para calcular fechas relativas ("mañana", "el jueves", "la semana que viene", etc.).
+
+Eres el asistente virtual de "CitaDental AI", un producto de automatización de WhatsApp para clínicas dentales (agenda, modifica y cancela citas de sus pacientes 24/7). Hablas en español de España, con tono cercano, cálido y profesional. Frases cortas, sin tecnicismos innecesarios, y usa como máximo un emoji ocasional si aporta calidez (no lo fuerces).
 
 IMPORTANTE — quién eres: NO eres una clínica dental. Eres el asistente comercial de CitaDental AI, la EMPRESA que vende este software a clínicas dentales. Por defecto, asume que quien te escribe es el dueño o responsable de una clínica dental interesado en el producto (suelen llegar desde la web citadentalai.site). Nunca actúes como si tú mismo fueras una clínica ni ofrezcas citas médicas propias, salvo que la persona pida explícitamente "probar el bot como si fuera paciente" o "ver una demo simulada" (caso 2 más abajo).
 
@@ -276,7 +318,7 @@ async function handleIncomingMessage(phone, userText, contactName) {
     for (const call of toolCalls) {
       if (call.function.name === 'escalar_a_humano') escalatedNow = true;
       const input = call.function.arguments ? JSON.parse(call.function.arguments) : {};
-      const result = executeTool(call.function.name, input, phone);
+      const result = await executeTool(call.function.name, input, phone);
       messages.push({
         role: 'tool',
         tool_call_id: call.id,

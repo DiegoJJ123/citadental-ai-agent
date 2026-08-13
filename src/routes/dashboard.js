@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const auth = require('../services/auth');
+const calendar = require('../services/calendar');
 const { getDashboardStats } = require('../services/stats');
 
 const router = express.Router();
@@ -65,7 +66,14 @@ function dashboardPage() {
 <body>
   <header>
     <h1>CitaDental AI · Dashboard</h1>
-    <a href="/dashboard/logout">Cerrar sesión</a>
+    <div style="display:flex; align-items:center; gap:16px;">
+      ${
+        calendar.isCalendarConnected()
+          ? '<span style="color:#4ade80; font-size:13px;">✓ Google Calendar conectado</span>'
+          : '<a href="/dashboard/calendar/connect" style="color:#93c5fd;">Conectar Google Calendar</a>'
+      }
+      <a href="/dashboard/logout">Cerrar sesión</a>
+    </div>
   </header>
   <main>
     <div class="cards" id="cards"></div>
@@ -171,6 +179,38 @@ router.get('/auth/google/callback', async (req, res) => {
 
 router.get('/dashboard', auth.requireDashboardAuth, (req, res) => {
   res.send(dashboardPage());
+});
+
+router.get('/dashboard/calendar/connect', auth.requireDashboardAuth, (req, res) => {
+  const state = crypto.randomBytes(16).toString('hex');
+  res.setHeader('Set-Cookie', `citadental_calendar_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=300`);
+  res.redirect(calendar.buildCalendarAuthUrl(req, state));
+});
+
+router.get('/auth/google/calendar/callback', auth.requireDashboardAuth, async (req, res) => {
+  try {
+    const cookies = req.headers.cookie || '';
+    const stateCookie = cookies
+      .split(';')
+      .map((c) => c.trim())
+      .find((c) => c.startsWith('citadental_calendar_state='));
+    const expectedState = stateCookie ? decodeURIComponent(stateCookie.split('=')[1]) : null;
+
+    if (!req.query.state || req.query.state !== expectedState) {
+      return res.redirect('/dashboard?error=Sesión de conexión con Calendar inválida, inténtalo de nuevo.');
+    }
+    if (!req.query.code) {
+      return res.redirect('/dashboard?error=Google no devolvió un código de autorización.');
+    }
+
+    const refreshToken = await calendar.exchangeCodeForRefreshToken(req, req.query.code);
+    calendar.setSetting('google_calendar_refresh_token', refreshToken);
+
+    res.redirect('/dashboard');
+  } catch (err) {
+    console.error('Error conectando Google Calendar:', err);
+    res.redirect('/dashboard');
+  }
 });
 
 router.get('/api/stats', (req, res) => {

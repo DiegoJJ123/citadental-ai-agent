@@ -80,6 +80,20 @@ CREATE TABLE IF NOT EXISTS message_log (
   phone TEXT NOT NULL,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
 `);
+
+// Migración simple: añade columnas nuevas a demo_leads si faltan (SQLite no soporta "ADD COLUMN IF NOT EXISTS").
+const demoLeadsColumns = db.prepare("PRAGMA table_info(demo_leads)").all().map((c) => c.name);
+if (!demoLeadsColumns.includes('fecha_hora_iso')) {
+  db.exec('ALTER TABLE demo_leads ADD COLUMN fecha_hora_iso TEXT');
+}
+if (!demoLeadsColumns.includes('calendar_event_link')) {
+  db.exec('ALTER TABLE demo_leads ADD COLUMN calendar_event_link TEXT');
+}
 
 module.exports = db;
