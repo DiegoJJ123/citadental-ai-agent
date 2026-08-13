@@ -1,6 +1,7 @@
 const express = require('express');
 const whatsapp = require('../services/whatsapp');
 const { handleIncomingMessage } = require('../services/agent');
+const db = require('../db/db');
 
 const router = express.Router();
 
@@ -31,6 +32,8 @@ router.post('/webhook', async (req, res) => {
 
     const from = message.from; // número del paciente, formato E.164 sin '+'
     const contactName = value.contacts?.[0]?.profile?.name;
+
+    db.prepare('INSERT INTO message_log (phone) VALUES (?)').run(from);
 
     if (message.type !== 'text') {
       await whatsapp.sendText(
