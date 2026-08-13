@@ -59,6 +59,18 @@ rm src/db/citadental.sqlite src/db/citadental.sqlite-*
 npm run seed
 ```
 
+## Producción y cómo editar desde cualquier sitio
+
+- El bot corre en producción en Render (`citadental-ai-bot.onrender.com`), no en ningún ordenador local.
+- Render tiene **auto-deploy** activado: cada `git push` a la rama `main` de este repo redespliega el bot solo, sin intervención manual.
+- Las variables de entorno de producción (tokens, API keys) están guardadas directamente en Render → Environment, no dependen del `.env` local de ninguna máquina.
+
+Para editar el bot desde otro ordenador (o sin instalar nada):
+
+- **Sin clonar nada**: edita los archivos directamente en GitHub (botón del lápiz en cada archivo) y haz commit a `main`. Render despliega solo en cuanto detecta el push.
+- **Con git**: `git clone https://github.com/DiegoJJ123/citadental-ai-agent.git`, edita, `git push`. Solo necesitas tener acceso a la cuenta de GitHub `DiegoJJ123`.
+- El dashboard (`dashboard.citadentalai.site`) es parte del mismo repo/despliegue — se actualiza igual, con un push a `main`.
+
 ## Estructura
 
 ```
