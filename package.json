@@ -1,0 +1,20 @@
+{
+  "name": "citadental-ai-agent",
+  "version": "1.0.0",
+  "description": "Bot de WhatsApp con IA para la demo de CitaDental AI",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed": "node src/db/seed.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "openai": "^4.71.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1"
+  }
+}

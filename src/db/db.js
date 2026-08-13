@@ -1,0 +1,69 @@
+const { DatabaseSync } = require('node:sqlite');
+const path = require('path');
+
+const raw = new DatabaseSync(path.join(__dirname, 'citadental.sqlite'));
+
+// Envuelve node:sqlite con la misma interfaz que usa el resto del código (estilo better-sqlite3).
+const db = {
+  exec(sql) {
+    raw.exec(sql);
+  },
+  prepare(sql) {
+    const stmt = raw.prepare(sql);
+    return {
+      run: (...params) => stmt.run(...params),
+      get: (...params) => stmt.get(...params),
+      all: (...params) => stmt.all(...params),
+    };
+  },
+  transaction(fn) {
+    return (...args) => {
+      raw.exec('BEGIN');
+      try {
+        const result = fn(...args);
+        raw.exec('COMMIT');
+        return result;
+      } catch (err) {
+        raw.exec('ROLLBACK');
+        throw err;
+      }
+    };
+  },
+};
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS patients (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone TEXT UNIQUE NOT NULL,
+  name TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS slots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,       -- YYYY-MM-DD
+  time TEXT NOT NULL,       -- HH:MM
+  treatment TEXT NOT NULL,  -- revision, limpieza, urgencia, ortodoncia, implante, estetica
+  is_booked INTEGER DEFAULT 0,
+  UNIQUE(date, time)
+);
+
+CREATE TABLE IF NOT EXISTS appointments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id INTEGER NOT NULL,
+  slot_id INTEGER NOT NULL,
+  status TEXT DEFAULT 'confirmada', -- confirmada, cancelada
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(patient_id) REFERENCES patients(id),
+  FOREIGN KEY(slot_id) REFERENCES slots(id)
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+  phone TEXT PRIMARY KEY,
+  history TEXT DEFAULT '[]',
+  escalated INTEGER DEFAULT 0,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+`);
+
+module.exports = db;
