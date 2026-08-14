@@ -71,6 +71,29 @@ Para editar el bot desde otro ordenador (o sin instalar nada):
 - **Con git**: `git clone https://github.com/DiegoJJ123/citadental-ai-agent.git`, edita, `git push`. Solo necesitas tener acceso a la cuenta de GitHub `DiegoJJ123`.
 - El dashboard (`dashboard.citadentalai.site`) es parte del mismo repo/despliegue — se actualiza igual, con un push a `main`.
 
+## Generar y publicar contenido en Instagram
+
+Genera una imagen con IA (`gpt-image-1`, el mismo motor que usa ChatGPT) y la publica directamente en el feed de Instagram de la clínica.
+
+```
+npm run post-instagram -- "foto realista de una clínica dental moderna y luminosa, estilo editorial" "✨ Sonríe con confianza. Pide tu cita hoy mismo. #CitaDentalAI"
+```
+
+Requiere configurar en `.env` (y en Render → Environment para producción):
+
+- `BASE_URL`: URL pública del bot (Instagram necesita descargar la imagen desde una URL, no vale un archivo local).
+- `IG_BUSINESS_ACCOUNT_ID`: ID de la cuenta de Instagram, que debe ser de tipo **Business o Creator** y estar vinculada a una **Página de Facebook**.
+- `IG_ACCESS_TOKEN`: token de acceso de esa Página, de **larga duración**, con permisos `instagram_basic`, `instagram_content_publish` y `pages_show_list`.
+
+Cómo conseguir el ID y el token (una vez, desde [Meta for Developers](https://developers.facebook.com/)):
+
+1. Crea o usa la misma app de Meta que ya usas para WhatsApp (App ID `2797322497276772`) y añade el producto **Instagram Graph API**.
+2. Vincula la cuenta de Instagram (Business/Creator) a una Página de Facebook desde la configuración de la propia cuenta de Instagram.
+3. Genera un token de usuario con los permisos de arriba en el [Graph API Explorer](https://developers.facebook.com/tools/explorer/), y cámbialo por uno de **Página de larga duración** (no caduca a las 24h) con el endpoint `oauth/access_token` (`grant_type=fb_exchange_token`) y luego `/me/accounts` para sacar el token de la Página concreta.
+4. Saca el `IG_BUSINESS_ACCOUNT_ID` con `GET /{page-id}?fields=instagram_business_account&access_token=...`.
+
+Las imágenes generadas se guardan en `public/generated/` (servidas en `/generated/<archivo>.png`) y no se suben al repo.
+
 ## Estructura
 
 ```
@@ -82,6 +105,10 @@ src/
     agent.js           orquestación con Claude (tool use) + historial por número
     clinic.js          lógica de agenda (reservar/modificar/cancelar/consultar)
     clinicInfo.js       datos ficticios de la clínica (FAQ)
+    imageGen.js         genera imágenes con la API de OpenAI (gpt-image-1)
+    instagram.js        publica imágenes en Instagram vía Graph API
+  scripts/
+    publicarInstagram.js  script CLI: genera una imagen y la publica en Instagram
   db/
     db.js              esquema SQLite
     seed.js             genera huecos de agenda ficticios

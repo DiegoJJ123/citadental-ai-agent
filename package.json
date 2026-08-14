@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "seed": "node src/db/seed.js"
+    "seed": "node src/db/seed.js",
+    "post-instagram": "node src/scripts/publicarInstagram.js"
   },
   "engines": {
     "node": ">=22.5.0"

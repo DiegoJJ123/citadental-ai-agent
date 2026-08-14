@@ -3,3 +3,4 @@ node_modules/
 src/db/citadental.sqlite
 src/db/citadental.sqlite-*
 npm-debug.log*
+public/generated/
