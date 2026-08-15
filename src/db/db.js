@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS appointments (
   slot_id INTEGER NOT NULL,
   status TEXT DEFAULT 'confirmada', -- confirmada, cancelada
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  reminder_48h_sent INTEGER DEFAULT 0,
+  reminder_24h_sent INTEGER DEFAULT 0,
   FOREIGN KEY(patient_id) REFERENCES patients(id),
   FOREIGN KEY(slot_id) REFERENCES slots(id)
 );
@@ -94,6 +96,15 @@ if (!demoLeadsColumns.includes('fecha_hora_iso')) {
 }
 if (!demoLeadsColumns.includes('calendar_event_link')) {
   db.exec('ALTER TABLE demo_leads ADD COLUMN calendar_event_link TEXT');
+}
+
+// Migración simple: añade columnas de recordatorios a appointments si faltan.
+const appointmentsColumns = db.prepare("PRAGMA table_info(appointments)").all().map((c) => c.name);
+if (!appointmentsColumns.includes('reminder_48h_sent')) {
+  db.exec('ALTER TABLE appointments ADD COLUMN reminder_48h_sent INTEGER DEFAULT 0');
+}
+if (!appointmentsColumns.includes('reminder_24h_sent')) {
+  db.exec('ALTER TABLE appointments ADD COLUMN reminder_24h_sent INTEGER DEFAULT 0');
 }
 
 module.exports = db;

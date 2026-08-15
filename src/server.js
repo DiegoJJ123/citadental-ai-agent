@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const webhookRouter = require('./routes/webhook');
 const dashboardRouter = require('./routes/dashboard');
+const { startReminderScheduler } = require('./services/reminders');
 
 const app = express();
 app.set('trust proxy', 1); // Render está detrás de un proxy; necesario para que req.protocol sea 'https'
@@ -16,4 +17,5 @@ app.use('/', dashboardRouter);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`CitaDental AI bot escuchando en el puerto ${PORT}`);
+  startReminderScheduler();
 });
