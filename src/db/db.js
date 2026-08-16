@@ -87,6 +87,14 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS error_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone TEXT,
+  context TEXT,
+  message TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 `);
 
 // Migración simple: añade columnas nuevas a demo_leads si faltan (SQLite no soporta "ADD COLUMN IF NOT EXISTS").

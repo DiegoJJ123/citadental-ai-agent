@@ -22,6 +22,7 @@ router.post('/webhook', async (req, res) => {
   // Responder rápido a Meta; procesar después.
   res.sendStatus(200);
 
+  let from;
   try {
     const entry = req.body.entry?.[0];
     const change = entry?.changes?.[0];
@@ -30,7 +31,7 @@ router.post('/webhook', async (req, res) => {
 
     if (!message) return; // p.ej. eventos de "status" (entregado/leído), los ignoramos
 
-    const from = message.from; // número del paciente, formato E.164 sin '+'
+    from = message.from; // número del paciente, formato E.164 sin '+'
     const contactName = value.contacts?.[0]?.profile?.name;
 
     db.prepare('INSERT INTO message_log (phone) VALUES (?)').run(from);
@@ -53,6 +54,15 @@ router.post('/webhook', async (req, res) => {
     }
   } catch (err) {
     console.error('Error procesando webhook de WhatsApp:', err);
+    try {
+      db.prepare('INSERT INTO error_log (phone, context, message) VALUES (?, ?, ?)').run(
+        from || null,
+        'webhook',
+        String(err.message || err)
+      );
+    } catch (logErr) {
+      console.error('Error guardando en error_log:', logErr);
+    }
   }
 });
 

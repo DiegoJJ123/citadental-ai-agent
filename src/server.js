@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const webhookRouter = require('./routes/webhook');
 const dashboardRouter = require('./routes/dashboard');
+const productMetricsRouter = require('./routes/productMetrics');
 const { startReminderScheduler } = require('./services/reminders');
 
 const app = express();
@@ -13,6 +14,7 @@ app.get('/health', (req, res) => res.json({ ok: true }));
 
 app.use('/', webhookRouter);
 app.use('/', dashboardRouter);
+app.use('/', productMetricsRouter);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

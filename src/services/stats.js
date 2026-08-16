@@ -5,6 +5,12 @@ function getDashboardStats() {
   const messagesToday = db
     .prepare("SELECT COUNT(*) AS n FROM message_log WHERE date(created_at) = date('now')")
     .get().n;
+  const messagesLast24h = db
+    .prepare("SELECT COUNT(*) AS n FROM message_log WHERE datetime(created_at) >= datetime('now', '-1 day')")
+    .get().n;
+  const recentErrorCount = db
+    .prepare("SELECT COUNT(*) AS n FROM error_log WHERE datetime(created_at) >= datetime('now', '-1 day')")
+    .get().n;
 
   const totalAppointments = db.prepare('SELECT COUNT(*) AS n FROM appointments').get().n;
   const confirmedAppointments = db
@@ -37,6 +43,8 @@ function getDashboardStats() {
   return {
     totalMessages,
     messagesToday,
+    messagesLast24h,
+    recentErrorCount,
     totalAppointments,
     confirmedAppointments,
     totalLeads,
