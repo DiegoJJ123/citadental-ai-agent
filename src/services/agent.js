@@ -209,10 +209,30 @@ async function executeTool(name, input, phone) {
         `INSERT INTO conversations (phone, history, escalated) VALUES (?, '[]', 1)
          ON CONFLICT(phone) DO UPDATE SET escalated = 1`
       ).run(phone);
+      notifyOrgOsEscalation(phone, input.motivo).catch((err) =>
+        console.error('Error notificando escalada al Org OS:', err)
+      );
       return { ok: true };
     }
     default:
       return { error: `Herramienta desconocida: ${name}` };
+  }
+}
+
+// Fire-and-forget notice to the Agentic Org OS (Diego's other app) so a real
+// human handoff shows up in the CRM immediately — never allowed to break the
+// bot's own escalation flow, hence caught by the caller, never awaited there.
+async function notifyOrgOsEscalation(phone, motivo) {
+  const url = process.env.ORGOS_API_URL;
+  const secret = process.env.BOT_ESCALATION_SECRET;
+  if (!url || !secret) return;
+  const response = await fetch(`${url}/api/leads/escalated`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-webhook-secret': secret },
+    body: JSON.stringify({ phone, motivo: motivo || null }),
+  });
+  if (!response.ok) {
+    throw new Error(`Org OS respondió ${response.status}: ${await response.text().catch(() => '')}`);
   }
 }
 
