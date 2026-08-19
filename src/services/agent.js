@@ -202,6 +202,17 @@ async function executeTool(name, input, phone) {
         );
       }
 
+      // El CRM del Org OS pasa el contacto a DEMO_PACTADA. Antes se quedaba en
+      // la etapa anterior: llegaba el aviso por WhatsApp pero el pipeline
+      // mostraba el lead como si nadie lo hubiera tocado.
+      notifyOrgOs('/api/leads/demo-booked', {
+        phone,
+        fechaHoraDemo: input.fecha_hora_demo || input.fecha_hora_iso || null,
+        meetLink: calendarEvent?.meetLink || null,
+        contactName: input.nombre_contacto || null,
+        email: input.email || null,
+      }).catch((err) => console.error('Error notificando demo pactada al Org OS:', err));
+
       return { ok: true };
     }
     case 'escalar_a_humano': {
@@ -219,21 +230,25 @@ async function executeTool(name, input, phone) {
   }
 }
 
-// Fire-and-forget notice to the Agentic Org OS (Diego's other app) so a real
-// human handoff shows up in the CRM immediately — never allowed to break the
-// bot's own escalation flow, hence caught by the caller, never awaited there.
-async function notifyOrgOsEscalation(phone, motivo) {
+// Fire-and-forget notices to the Agentic Org OS (Diego's other app) so the CRM
+// refleja lo que el bot va haciendo sin que nadie lo mueva a mano. Nunca se
+// permite que rompan el flujo del bot: el llamante captura el error y no espera.
+async function notifyOrgOs(path, payload) {
   const url = process.env.ORGOS_API_URL;
   const secret = process.env.BOT_ESCALATION_SECRET;
   if (!url || !secret) return;
-  const response = await fetch(`${url}/api/leads/escalated`, {
+  const response = await fetch(`${url}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-webhook-secret': secret },
-    body: JSON.stringify({ phone, motivo: motivo || null }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     throw new Error(`Org OS respondió ${response.status}: ${await response.text().catch(() => '')}`);
   }
+}
+
+function notifyOrgOsEscalation(phone, motivo) {
+  return notifyOrgOs('/api/leads/escalated', { phone, motivo: motivo || null });
 }
 
 function getSystemPrompt() {
@@ -310,6 +325,13 @@ function trimHistory(history, maxMessages = 20) {
 
 async function handleIncomingMessage(phone, userText, contactName) {
   clinic.getOrCreatePatient(phone, contactName);
+
+  // Cualquier respuesta del lead lo mueve solo a GESTIONANDO en el CRM. El Org
+  // OS es idempotente (esto se dispara en cada mensaje entrante) y no avisa a
+  // nadie: el bot sigue trabajando la conversación por su cuenta.
+  notifyOrgOs('/api/leads/replied', { phone, preview: userText || '' }).catch((err) =>
+    console.error('Error notificando respuesta del lead al Org OS:', err)
+  );
 
   const { history, escalated } = await getHistory(phone);
 
