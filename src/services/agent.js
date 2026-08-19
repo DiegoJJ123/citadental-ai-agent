@@ -333,6 +333,18 @@ async function handleIncomingMessage(phone, userText, contactName) {
     console.error('Error notificando respuesta del lead al Org OS:', err)
   );
 
+  // Replicar el mensaje entrante a la bandeja del Org OS. Si el numero está
+  // en modo CLOUD_API puro (sin coexistencia), Diego no puede leer las
+  // conversaciones desde la app WhatsApp Business; esto es lo que le permite
+  // verlas en /conversaciones. Fire-and-forget: si falla, la conversacion
+  // del bot con el paciente sigue igual.
+  notifyOrgOs('/api/leads/message-log', {
+    phone,
+    direction: 'INBOUND',
+    body: userText || '',
+    senderName: contactName || null,
+  }).catch((err) => console.error('Error registrando mensaje entrante en el Org OS:', err));
+
   const { history, escalated } = await getHistory(phone);
 
   if (escalated) {
@@ -373,7 +385,18 @@ async function handleIncomingMessage(phone, userText, contactName) {
 
   saveHistory(phone, trimHistory(messages), escalatedNow);
 
-  return finalText || 'Perdona, ¿puedes repetírmelo? No he entendido bien tu mensaje.';
+  const replyText = finalText || 'Perdona, ¿puedes repetírmelo? No he entendido bien tu mensaje.';
+  // Replicar la respuesta del bot al Org OS para que aparezca en la bandeja
+  // /conversaciones. Fire-and-forget: no bloquea el retorno al webhook de
+  // WhatsApp Cloud API, que ya está esperando la respuesta.
+  notifyOrgOs('/api/leads/message-log', {
+    phone,
+    direction: 'OUTBOUND',
+    body: replyText,
+    senderName: 'Bot',
+  }).catch((err) => console.error('Error registrando respuesta del bot en el Org OS:', err));
+
+  return replyText;
 }
 
 module.exports = { handleIncomingMessage };
