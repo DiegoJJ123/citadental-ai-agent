@@ -1,6 +1,6 @@
 const express = require('express');
 const whatsapp = require('../services/whatsapp');
-const { handleIncomingMessage } = require('../services/agent');
+const { handleIncomingMessage, extractIncomingText, notifyLeadRepliedOnly } = require('../services/agent');
 const db = require('../db/db');
 
 const router = express.Router();
@@ -36,7 +36,17 @@ router.post('/webhook', async (req, res) => {
 
     db.prepare('INSERT INTO message_log (phone) VALUES (?)').run(from);
 
-    if (message.type !== 'text') {
+    // Algunos mensajes no llegan como type 'text' pero SÍ traen texto legible
+    // (respuestas de botón/lista de WhatsApp, p. ej. si la clínica tiene su
+    // propio bot de gestión de turnos contestando por botones). Los tratamos
+    // como texto normal en vez de descartarlos con el fallback genérico.
+    const userText = extractIncomingText(message);
+
+    if (userText === null) {
+      // Tipo sin texto legible (imagen, audio, ubicación, sticker...). Sigue
+      // siendo una respuesta real del lead — se refleja en el CRM aunque el
+      // bot no pueda procesar el contenido con el LLM.
+      notifyLeadRepliedOnly(from, `[mensaje tipo ${message.type}]`);
       await whatsapp.sendText(
         from,
         'Por ahora solo puedo leer mensajes de texto 🙂 ¿Puedes escribirme lo que necesitas?'
@@ -46,7 +56,6 @@ router.post('/webhook', async (req, res) => {
 
     await whatsapp.markAsRead(message.id);
 
-    const userText = message.text.body;
     const reply = await handleIncomingMessage(from, userText, contactName);
 
     if (reply) {

@@ -251,6 +251,52 @@ function notifyOrgOsEscalation(phone, motivo) {
   return notifyOrgOs('/api/leads/escalated', { phone, motivo: motivo || null });
 }
 
+/**
+ * Bug real (encontrado 2026-08-24, Diego): una clínica respondió con un
+ * mensaje generado por su PROPIO bot de WhatsApp (auto-reply de gestión de
+ * turnos). Meta entrega eso como un mensaje NO 'text' (interactive/button,
+ * según el proveedor del otro bot) — el webhook cortaba antes de llegar a
+ * handleIncomingMessage() y pasaban dos cosas mal a la vez:
+ *   1) El paciente recibía el fallback "solo puedo leer texto" sin sentido,
+ *      porque el mensaje SÍ tenía texto legible, solo que no venía en
+ *      message.text.body.
+ *   2) El lead nunca se movía a GESTIONANDO en el CRM porque
+ *      notifyOrgOs('/api/leads/replied') vive dentro de handleIncomingMessage,
+ *      que nunca se llamaba.
+ *
+ * extractIncomingText intenta sacar texto legible de los tipos de mensaje de
+ * WhatsApp Cloud API que SÍ traen texto aunque no sean 'text' puro:
+ * respuestas de botón, de lista, y botones de plantilla. Si no hay texto
+ * legible (imagen, audio, ubicación, sticker...), devuelve null y el
+ * llamante decide el fallback — pero SIEMPRE se notifica el reply al CRM
+ * antes, porque cualquier respuesta real cuenta como "el lead contestó".
+ */
+function extractIncomingText(message) {
+  if (!message) return null;
+  if (message.type === 'text') return message.text?.body ?? null;
+  if (message.type === 'button') return message.button?.text ?? null;
+  if (message.type === 'interactive') {
+    return (
+      message.interactive?.button_reply?.title ??
+      message.interactive?.list_reply?.title ??
+      null
+    );
+  }
+  return null;
+}
+
+/**
+ * Notifica al Org OS que el lead respondió SIN procesar el contenido con el
+ * LLM — se usa cuando el mensaje entrante no tiene texto legible (imagen,
+ * audio, ubicación, plantilla de otro bot, etc.) pero sigue siendo una
+ * respuesta real que debe mover el contacto a GESTIONANDO.
+ */
+function notifyLeadRepliedOnly(phone, previewLabel) {
+  return notifyOrgOs('/api/leads/replied', { phone, preview: previewLabel || '' }).catch((err) =>
+    console.error('Error notificando respuesta (sin texto) del lead al Org OS:', err)
+  );
+}
+
 function getSystemPrompt() {
   const hoy = new Date().toLocaleDateString('es-ES', {
     timeZone: 'Europe/Madrid',
@@ -399,4 +445,4 @@ async function handleIncomingMessage(phone, userText, contactName) {
   return replyText;
 }
 
-module.exports = { handleIncomingMessage };
+module.exports = { handleIncomingMessage, extractIncomingText, notifyLeadRepliedOnly };
