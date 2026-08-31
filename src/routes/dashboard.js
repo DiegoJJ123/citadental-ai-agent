@@ -87,6 +87,20 @@ function dashboardPage() {
       <div id="leads"></div>
     </section>
     <section>
+      <h2>Pausar bot para hablar tú mismo</h2>
+      <p style="color:#94a3b8; font-size:13px; margin-bottom:12px;">
+        Si vas a escribirle a un número tú mismo por WhatsApp, pausa el bot primero para que no te pise las
+        respuestas — el bot deja de contestar a ese número por completo hasta que lo reactives.
+      </p>
+      <div style="display:flex; gap:8px; max-width:420px;">
+        <input id="pausePhone" type="text" placeholder="Número en formato 34600000000"
+          style="flex:1; padding:10px 12px; border-radius:8px; border:1px solid #334155; background:#0f172a; color:#e2e8f0;" />
+        <button id="pauseBtn" style="padding:10px 16px; border-radius:8px; border:none; background:#dc2626; color:#fff; font-weight:600; cursor:pointer;">Pausar bot</button>
+        <button id="resumeBtn" style="padding:10px 16px; border-radius:8px; border:none; background:#16a34a; color:#fff; font-weight:600; cursor:pointer;">Reactivar bot</button>
+      </div>
+      <div id="pauseMsg" style="margin-top:10px; font-size:13px;"></div>
+    </section>
+    <section>
       <h2>Resetear conversación de WhatsApp</h2>
       <p style="color:#94a3b8; font-size:13px; margin-bottom:12px;">
         Si un número se quedó "atascado" respondiendo como si fuera la clínica (o en cualquier otro modo raro),
@@ -141,6 +155,35 @@ function dashboardPage() {
         : '<div class="empty">Todavía no hay leads registrados.</div>';
     }
     load();
+
+    async function togglePause(action, successText) {
+      const phone = document.getElementById('pausePhone').value.trim();
+      const msgEl = document.getElementById('pauseMsg');
+      if (!phone) {
+        msgEl.style.color = '#fca5a5';
+        msgEl.textContent = 'Escribe un número primero.';
+        return;
+      }
+      msgEl.style.color = '#94a3b8';
+      msgEl.textContent = 'Un momento...';
+      const res = await fetch('/api/' + action + '-conversation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ phone }),
+      });
+      if (res.ok) {
+        msgEl.style.color = '#4ade80';
+        msgEl.textContent = successText;
+      } else {
+        msgEl.style.color = '#fca5a5';
+        msgEl.textContent = 'Error. Inténtalo de nuevo.';
+      }
+    }
+    document.getElementById('pauseBtn').addEventListener('click', () =>
+      togglePause('pause', 'Listo. El bot ya no le contesta a ese número hasta que lo reactives.'));
+    document.getElementById('resumeBtn').addEventListener('click', () =>
+      togglePause('resume', 'Listo. El bot volvió a contestarle a ese número.'));
 
     document.getElementById('resetBtn').addEventListener('click', async () => {
       const phone = document.getElementById('resetPhone').value.trim();
@@ -271,6 +314,39 @@ router.post('/api/reset-conversation', express.json(), (req, res) => {
     return res.status(400).json({ error: 'Falta el número de teléfono' });
   }
   db.prepare('DELETE FROM conversations WHERE phone = ?').run(phone);
+  res.json({ ok: true });
+});
+
+// Mismo flag `escalated` que ya usa la tool escalar_a_humano (agent.js) cuando
+// el LEAD pide hablar con una persona: handleIncomingMessage no llama al LLM
+// ni responde nada si escalated=1 (agent.js ~línea 394). Esto deja que Diego
+// active ese mismo silencio a mano, sin esperar a que el lead lo pida.
+router.post('/api/pause-conversation', express.json(), (req, res) => {
+  const email = auth.getSessionEmail(req);
+  if (!email || !auth.isAllowedEmail(email)) {
+    return res.status(401).json({ error: 'No autenticado' });
+  }
+  const phone = (req.body?.phone || '').replace(/\D/g, '');
+  if (!phone) {
+    return res.status(400).json({ error: 'Falta el número de teléfono' });
+  }
+  db.prepare(
+    "INSERT INTO conversations (phone, history, escalated) VALUES (?, '[]', 1) " +
+      'ON CONFLICT(phone) DO UPDATE SET escalated = 1'
+  ).run(phone);
+  res.json({ ok: true });
+});
+
+router.post('/api/resume-conversation', express.json(), (req, res) => {
+  const email = auth.getSessionEmail(req);
+  if (!email || !auth.isAllowedEmail(email)) {
+    return res.status(401).json({ error: 'No autenticado' });
+  }
+  const phone = (req.body?.phone || '').replace(/\D/g, '');
+  if (!phone) {
+    return res.status(400).json({ error: 'Falta el número de teléfono' });
+  }
+  db.prepare('UPDATE conversations SET escalated = 0 WHERE phone = ?').run(phone);
   res.json({ ok: true });
 });
 
