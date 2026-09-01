@@ -49,4 +49,14 @@ router.post('/api/product-control/resume-conversation', express.json(), (req, re
   res.json({ ok: true });
 });
 
+// Diego pidió (2026-09-01) ver la lista de números bloqueados desde la
+// pestaña "Bloq WhatsApp" del Org OS, no solo poder bloquear a ciegas.
+router.get('/api/product-control/blocked-conversations', (req, res) => {
+  if (!requireApiKey(req, res)) return;
+  const rows = db
+    .prepare('SELECT phone, updated_at FROM conversations WHERE escalated = 1 ORDER BY updated_at DESC')
+    .all();
+  res.json({ blocked: rows });
+});
+
 module.exports = router;
