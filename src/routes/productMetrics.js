@@ -59,4 +59,16 @@ router.get('/api/product-control/blocked-conversations', (req, res) => {
   res.json({ blocked: rows });
 });
 
+// Endpoint de solo lectura para ver el detalle de los errores que cuenta
+// /api/product-metrics, ya que ese contador no trae el mensaje de la excepción.
+router.get('/api/product-control/recent-errors', (req, res) => {
+  if (!requireApiKey(req, res)) return;
+  const rows = db
+    .prepare(
+      "SELECT phone, context, message, created_at FROM error_log WHERE datetime(created_at) >= datetime('now','-1 day') ORDER BY created_at DESC"
+    )
+    .all();
+  res.json({ errors: rows });
+});
+
 module.exports = router;
