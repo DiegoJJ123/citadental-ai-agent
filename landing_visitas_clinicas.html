@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CitaDental AI — Automatiza las citas de tu clínica por WhatsApp</title>
+<style>
+  :root{
+    --blue-900:#0a1f44;
+    --blue-700:#0f3f91;
+    --blue-600:#1559c7;
+    --blue-500:#2f7cf6;
+    --blue-400:#5b9dff;
+    --blue-100:#eaf2ff;
+    --gray-600:#4b5563;
+    --gray-100:#f4f7fb;
+    --radius:16px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--blue-900);
+    background:#fff;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{text-decoration:none;}
+  img{max-width:100%;display:block;}
+  .wrap{max-width:720px;margin:0 auto;padding:0 20px;}
+
+  header.topbar{
+    position:sticky;top:0;z-index:50;
+    background:rgba(255,255,255,.92);
+    backdrop-filter:blur(6px);
+    border-bottom:1px solid #eef1f6;
+  }
+  .topbar-inner{
+    max-width:720px;margin:0 auto;padding:12px 20px;
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:17px;}
+  .brand img{width:30px;height:30px;}
+  .brand .ai{color:var(--blue-500);}
+  .top-cta{
+    background:var(--blue-600);color:#fff;padding:8px 14px;border-radius:999px;
+    font-size:13px;font-weight:600;white-space:nowrap;
+  }
+
+  .hero{
+    padding:40px 0 32px;
+    background:linear-gradient(180deg,#f7fafe 0%, #fff 100%);
+    text-align:center;
+  }
+  .pill{
+    display:inline-flex;align-items:center;gap:6px;
+    background:var(--blue-100);color:var(--blue-600);
+    font-size:12.5px;font-weight:700;letter-spacing:.2px;
+    padding:6px 14px;border-radius:999px;margin-bottom:18px;
+  }
+  .pill::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--blue-500);}
+  h1{
+    font-size:34px;line-height:1.15;margin:0 0 14px;font-weight:800;
+  }
+  h1 span{color:var(--blue-500);}
+  .hero p.sub{
+    font-size:16.5px;color:var(--gray-600);max-width:520px;margin:0 auto 26px;
+  }
+  .cta-row{display:flex;flex-direction:column;gap:12px;align-items:center;margin-bottom:28px;}
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    padding:15px 26px;border-radius:12px;font-weight:700;font-size:16px;
+    width:100%;max-width:340px;
+  }
+  .btn-primary{background:var(--blue-600);color:#fff;box-shadow:0 10px 24px -8px rgba(21,89,199,.55);}
+  .btn-secondary{background:#fff;color:var(--blue-700);border:1.5px solid #dbe6fb;}
+
+  .stats{display:flex;justify-content:center;gap:28px;flex-wrap:wrap;}
+  .stat b{display:block;font-size:22px;font-weight:800;color:var(--blue-900);}
+  .stat span{font-size:11.5px;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;}
+
+  .mascota{width:150px;margin:22px auto 0;}
+
+  section{padding:40px 0;}
+  .section-tag{
+    text-align:center;color:var(--blue-500);font-weight:700;font-size:12.5px;
+    text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px;
+  }
+  h2{text-align:center;font-size:25px;line-height:1.25;margin:0 0 12px;font-weight:800;}
+  h2 span{color:var(--blue-500);}
+  p.center{text-align:center;color:var(--gray-600);font-size:15.5px;max-width:480px;margin:0 auto;}
+
+  .problema{background:var(--blue-900);color:#fff;border-radius:24px;margin:0 20px;}
+  .problema .wrap{max-width:680px;padding:36px 24px;}
+  .problema h2,.problema .section-tag{color:#fff;}
+  .problema .section-tag{color:#9db9ef;}
+  .problema-grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:24px;}
+  @media(min-width:480px){.problema-grid{grid-template-columns:1fr 1fr;}}
+  .problema-card{
+    background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);
+    border-radius:14px;padding:16px;
+  }
+  .problema-card b{display:block;font-size:20px;color:#7db1ff;margin-bottom:4px;}
+  .problema-card p{margin:0;font-size:13.5px;color:#c9d7f2;line-height:1.4;}
+
+  .pasos{display:flex;flex-direction:column;gap:16px;margin-top:28px;}
+  .paso{
+    display:flex;gap:14px;align-items:flex-start;
+    background:var(--gray-100);border-radius:14px;padding:16px;
+  }
+  .paso .num{
+    flex:0 0 auto;width:34px;height:34px;border-radius:10px;
+    background:var(--blue-600);color:#fff;font-weight:800;font-size:15px;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .paso h3{margin:0 0 4px;font-size:15.5px;}
+  .paso p{margin:0;font-size:13.8px;color:var(--gray-600);line-height:1.45;}
+
+  .beneficios{display:grid;grid-template-columns:1fr;gap:14px;margin-top:28px;}
+  @media(min-width:480px){.beneficios{grid-template-columns:1fr 1fr;}}
+  .beneficio{
+    border:1px solid #e8edf6;border-radius:14px;padding:18px;
+  }
+  .beneficio .ico{
+    width:40px;height:40px;border-radius:10px;background:var(--blue-100);
+    display:flex;align-items:center;justify-content:center;font-size:19px;margin-bottom:10px;
+  }
+  .beneficio h3{margin:0 0 4px;font-size:15px;}
+  .beneficio p{margin:0;font-size:13.5px;color:var(--gray-600);line-height:1.4;}
+
+  .chat-demo{
+    background:var(--gray-100);border-radius:20px;padding:20px;margin-top:28px;
+    max-width:360px;margin-left:auto;margin-right:auto;
+  }
+  .bubble{max-width:86%;padding:10px 13px;border-radius:14px;font-size:13.8px;margin-bottom:9px;line-height:1.4;}
+  .bubble.in{background:#fff;border:1px solid #e6eaf1;border-bottom-left-radius:4px;}
+  .bubble.out{background:var(--blue-600);color:#fff;margin-left:auto;border-bottom-right-radius:4px;}
+
+  .aviso{
+    text-align:center;font-size:12px;color:#97a3b7;margin-top:10px;
+  }
+
+  .cta-final{
+    background:linear-gradient(135deg,var(--blue-700),var(--blue-500));
+    color:#fff;border-radius:24px;margin:0 20px;text-align:center;
+    padding:40px 24px;
+  }
+  .cta-final h2{color:#fff;}
+  .cta-final p{color:#d9e7ff;max-width:420px;margin:0 auto 22px;font-size:15px;}
+  .cta-final .btn-primary{background:#fff;color:var(--blue-700);box-shadow:none;margin:0 auto;}
+
+  footer{padding:30px 0 44px;text-align:center;}
+  footer .brand{justify-content:center;margin-bottom:10px;}
+  footer p{font-size:13px;color:var(--gray-600);margin:4px 0;}
+  footer a.web{color:var(--blue-600);font-weight:700;}
+
+  .whatsapp-float{
+    position:fixed;bottom:18px;right:18px;z-index:60;
+    background:#25D366;color:#fff;border-radius:999px;
+    padding:13px 18px;font-weight:700;font-size:14px;
+    display:flex;align-items:center;gap:8px;
+    box-shadow:0 10px 24px -6px rgba(0,0,0,.35);
+  }
+
+  @media(min-width:600px){
+    h1{font-size:42px;}
+    .cta-row{flex-direction:row;}
+    .btn{width:auto;}
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand"><img src="citadental_icon_only.png" alt="CitaDental AI"> CitaDental<span class="ai"> AI</span></div>
+    <a class="top-cta" href="https://wa.me/34642069050?text=Hola%2C%20quiero%20probar%20el%20asistente%20de%20CitaDental%20AI">Probar bot</a>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <div class="pill">IA conversacional para clínicas dentales</div>
+    <h1>No pierdas más pacientes por <span>tardar en responder</span>.</h1>
+    <p class="sub">Un asistente de inteligencia artificial que atiende tu WhatsApp, responde en segundos y agenda citas 24 horas al día, 7 días a la semana — sin que tu recepción tenga que estar pendiente del móvil.</p>
+
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://wa.me/34642069050?text=Hola%2C%20quiero%20probar%20el%20asistente%20de%20CitaDental%20AI">💬 Probar el bot ahora</a>
+      <a class="btn btn-secondary" href="#como-funciona">Ver cómo funciona</a>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><b>&lt;10 s</b><span>Tiempo de respuesta</span></div>
+      <div class="stat"><b>24/7</b><span>Atención</span></div>
+      <div class="stat"><b>0</b><span>Citas por olvido de llamar</span></div>
+    </div>
+
+    <img class="mascota" src="citadental_icon_only2.png" alt="Mascota CitaDental AI">
+  </div>
+</section>
+
+<section class="problema">
+  <div class="wrap">
+    <div class="section-tag">El problema</div>
+    <h2>Cada mensaje sin respuesta es una cita perdida</h2>
+    <div class="problema-grid">
+      <div class="problema-card"><b>Fuera de horario</b><p>Pacientes que escriben por la tarde-noche y reciben respuesta al día siguiente… si la reciben.</p></div>
+      <div class="problema-card"><b>Recepción saturada</b><p>Mientras se atiende en mostrador o por teléfono, los WhatsApp se acumulan sin contestar.</p></div>
+      <div class="problema-card"><b>Fines de semana</b><p>La clínica cierra, pero la gente sigue buscando clínica dental y escribiendo a varias a la vez.</p></div>
+      <div class="problema-card"><b>Respuesta lenta = se van</b><p>Si tardas horas en responder, el paciente ya ha reservado en la clínica de al lado.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="como-funciona">
+  <div class="wrap">
+    <div class="section-tag">Cómo funciona</div>
+    <h2>De mensaje de WhatsApp a <span>cita en tu agenda</span></h2>
+    <p class="center">Sin cambiar de número, sin app nueva que aprender. Se conecta a tu WhatsApp y a tu agenda.</p>
+    <div class="pasos">
+      <div class="paso"><div class="num">1</div><div><h3>El paciente escribe por WhatsApp</h3><p>A cualquier hora, pidiendo información, precio o cita.</p></div></div>
+      <div class="paso"><div class="num">2</div><div><h3>La IA responde al instante</h3><p>Resuelve dudas básicas y entiende qué necesita el paciente, con un tono natural.</p></div></div>
+      <div class="paso"><div class="num">3</div><div><h3>Consulta tu agenda real y reserva</h3><p>Ofrece huecos disponibles y confirma la cita directamente, sin intervención humana.</p></div></div>
+      <div class="paso"><div class="num">4</div><div><h3>Si hace falta, avisa a tu equipo</h3><p>Casos complejos o que el paciente pide hablar con una persona se derivan a recepción.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section style="background:var(--gray-100);">
+  <div class="wrap">
+    <div class="section-tag">Beneficios</div>
+    <h2>Resultados reales para tu clínica</h2>
+    <div class="beneficios">
+      <div class="beneficio"><div class="ico">⏱️</div><h3>Menos trabajo manual</h3><p>Tu equipo deja de perder tiempo contestando lo mismo una y otra vez.</p></div>
+      <div class="beneficio"><div class="ico">😊</div><h3>Pacientes más satisfechos</h3><p>Respuestas rápidas y precisas, a cualquier hora del día.</p></div>
+      <div class="beneficio"><div class="ico">📈</div><h3>Más citas, menos huecos</h3><p>Cada consulta se convierte en una oportunidad real de reserva.</p></div>
+      <div class="beneficio"><div class="ico">🔔</div><h3>Menos olvidos</h3><p>Recordatorios automáticos 48h y 24h antes de cada cita.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="section-tag">Así habla CitaDental AI</div>
+    <h2>Pruébalo tú mismo, ahora mismo</h2>
+    <p class="center">Esto es justo lo que verá tu paciente al escribirte por WhatsApp.</p>
+    <div class="chat-demo">
+      <div class="bubble in">Hola, quería información sobre implantes 🦷</div>
+      <div class="bubble out">¡Hola! Claro 😊 ¿Prefieres información o reservar una valoración?</div>
+      <div class="bubble in">Reservar</div>
+      <div class="bubble out">Perfecto. ¿Qué día te viene mejor esta semana?</div>
+      <div class="bubble in">El jueves por la tarde</div>
+      <div class="bubble out">Tengo el jueves a las 17:30 ✅ ¿Te lo confirmo?</div>
+    </div>
+    <div class="cta-row" style="margin-top:24px;">
+      <a class="btn btn-primary" href="https://wa.me/34642069050?text=Hola%2C%20quiero%20probar%20el%20asistente%20de%20CitaDental%20AI">💬 Hablar con el bot por WhatsApp</a>
+    </div>
+  </div>
+</section>
+
+<section class="cta-final">
+  <div class="wrap">
+    <div class="section-tag" style="color:#cfe0ff;">Para tu clínica</div>
+    <h2>Empieza a convertir más consultas en citas</h2>
+    <p>Pide una demo gratuita y te mostramos cómo quedaría funcionando con tu propia clínica, en menos de 10 minutos.</p>
+    <a class="btn btn-primary" href="https://wa.me/34642069050?text=Hola%2C%20soy%20de%20una%20cl%C3%ADnica%20dental%20y%20quiero%20una%20demo%20de%20CitaDental%20AI">Solicitar demo gratuita</a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="brand"><img src="citadental_icon_only.png" alt="CitaDental AI"> CitaDental<span class="ai"> AI</span></div>
+    <p>📍 Calle Alcalá 290 · 28027 Madrid</p>
+    <p>📱 WhatsApp: 642 06 90 50</p>
+    <p><a class="web" href="https://www.citadentalai.site/" target="_blank">citadentalai.site</a></p>
+  </div>
+</footer>
+
+<a class="whatsapp-float" href="https://wa.me/34642069050?text=Hola%2C%20quiero%20probar%20el%20asistente%20de%20CitaDental%20AI">💬 Probar bot</a>
+
+</body>
+</html>
