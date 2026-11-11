@@ -69,9 +69,11 @@ function dashboardPage() {
     <h1>CitaDental AI · Dashboard</h1>
     <div style="display:flex; align-items:center; gap:16px;">
       ${
-        calendar.isCalendarConnected()
-          ? '<span style="color:#4ade80; font-size:13px;">✓ Google Calendar conectado</span>'
-          : '<a href="/dashboard/calendar/connect" style="color:#93c5fd;">Conectar Google Calendar</a>'
+        !calendar.isCalendarConnected()
+          ? '<a href="/dashboard/calendar/connect" style="color:#93c5fd;">Conectar Google Calendar</a>'
+          : calendar.isCalendarPersisted()
+            ? '<span style="color:#4ade80; font-size:13px;">✓ Google Calendar conectado</span>'
+            : '<a href="/dashboard/calendar/connect" style="color:#fbbf24; font-size:13px;">⚠ Calendar sin guardar en Render (se perderá en el próximo deploy) · reconectar</a>'
       }
       <a href="/dashboard/logout">Cerrar sesión</a>
     </div>
@@ -172,6 +174,42 @@ function dashboardPage() {
 </html>`;
 }
 
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+// Se muestra una sola vez tras conectar Calendar: el token hay que copiarlo a
+// Render → Environment para que la conexión sobreviva a los deploys.
+function calendarConnectedPage(refreshToken) {
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>CitaDental AI — Calendar conectado</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0f172a; color: #e2e8f0; max-width: 720px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 20px; color: #4ade80; }
+  code, textarea { font-family: ui-monospace, monospace; }
+  textarea { width: 100%; height: 80px; background: #1e293b; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 10px; box-sizing: border-box; }
+  button { background: #2563eb; color: white; border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+  .warn { background: #422006; color: #fde68a; padding: 12px; border-radius: 8px; font-size: 14px; }
+  a { color: #93c5fd; }
+</style>
+</head>
+<body>
+  <h1>✓ Google Calendar conectado</h1>
+  <p class="warn">Paso obligatorio para que no se pierda en el próximo deploy: copia este valor en
+  <b>Render → citadental-ai-bot → Environment</b> como variable <code>GOOGLE_CALENDAR_REFRESH_TOKEN</code> y guarda.
+  Es una credencial: no la compartas con nadie.</p>
+  <textarea id="t" readonly>${escapeHtml(refreshToken)}</textarea>
+  <p><button onclick="navigator.clipboard.writeText(document.getElementById('t').value); this.textContent='Copiado ✓'">Copiar</button>
+  &nbsp; <a href="/dashboard">Volver al dashboard</a></p>
+</body>
+</html>`;
+}
+
 router.get('/dashboard/login', (req, res) => {
   res.send(loginPage(req.query.error));
 });
@@ -246,7 +284,7 @@ router.get('/auth/google/calendar/callback', auth.requireDashboardAuth, async (r
     const refreshToken = await calendar.exchangeCodeForRefreshToken(req, req.query.code);
     calendar.setSetting('google_calendar_refresh_token', refreshToken);
 
-    res.redirect('/dashboard');
+    res.send(calendarConnectedPage(refreshToken));
   } catch (err) {
     console.error('Error conectando Google Calendar:', err);
     res.redirect('/dashboard');

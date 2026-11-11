@@ -59,12 +59,24 @@ function setSetting(key, value) {
   ).run(key, value, value);
 }
 
+// El disco de Render no es persistente: la SQLite se borra en cada deploy o
+// reinicio. Por eso el refresh token se puede fijar en la variable de entorno
+// GOOGLE_CALENDAR_REFRESH_TOKEN, que sobrevive a los deploys. Si además hay
+// uno guardado en la BD (recién conectado desde el dashboard), manda ese.
+function getRefreshToken() {
+  return getSetting('google_calendar_refresh_token') || process.env.GOOGLE_CALENDAR_REFRESH_TOKEN || null;
+}
+
 function isCalendarConnected() {
-  return Boolean(getSetting('google_calendar_refresh_token'));
+  return Boolean(getRefreshToken());
+}
+
+function isCalendarPersisted() {
+  return Boolean(process.env.GOOGLE_CALENDAR_REFRESH_TOKEN);
 }
 
 async function getAccessToken() {
-  const refreshToken = getSetting('google_calendar_refresh_token');
+  const refreshToken = getRefreshToken();
   if (!refreshToken) return null;
 
   const res = await fetch('https://oauth2.googleapis.com/token', {
@@ -135,6 +147,7 @@ module.exports = {
   buildCalendarAuthUrl,
   exchangeCodeForRefreshToken,
   isCalendarConnected,
+  isCalendarPersisted,
   setSetting,
   getSetting,
   createDemoEvent,
