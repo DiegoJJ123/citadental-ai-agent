@@ -65,7 +65,7 @@ main.card{background:#fff;border-radius:12px;padding:28px;border:1px solid #e5e7
 h1{font-size:22px;margin:0 0 6px} h2{font-size:17px;margin:24px 0 8px} p.sub{color:#6b7280;margin:0 0 20px}
 label{display:block;font-weight:600;font-size:14px;margin:14px 0 6px} .hint{font-weight:400;color:#6b7280;font-size:13px}
 input[type=text],input[type=url],input[type=email],input[type=tel],input[type=password],input[type=number],input[type=time],textarea,select{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font:inherit;background:#fff}
-textarea{min-height:80px;resize:vertical} input:focus,textarea:focus{outline:2px solid #c7d2fe;border-color:#6366f1}
+textarea{min-height:80px;resize:vertical} input[type=time]{width:auto;min-width:118px;display:inline-block} td.range{white-space:nowrap} input:focus,textarea:focus{outline:2px solid #c7d2fe;border-color:#6366f1}
 .btn{display:inline-block;background:#4f46e5;color:#fff;border:0;border-radius:8px;padding:11px 18px;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
 .btn:hover{background:#4338ca} .btn.sec{background:#fff;color:#374151;border:1px solid #d1d5db} .btn.sec:hover{background:#f9fafb}
 .btn.green{background:#16a34a} .btn.red{background:#dc2626} .btn[disabled]{opacity:.6;cursor:wait}
@@ -297,8 +297,8 @@ router.get('/onboarding/:id/agenda', loadClinic, (req, res) => {
     const r = sch.hours[n] || sch.hours[String(n)] || [];
     const [m, t] = [r[0] || ['', ''], r[1] || ['', '']];
     return `<tr><td><strong>${name}</strong></td>
-      <td><input type="time" name="h${n}_1a" value="${esc(m[0])}"> – <input type="time" name="h${n}_1b" value="${esc(m[1])}"></td>
-      <td><input type="time" name="h${n}_2a" value="${esc(t[0])}"> – <input type="time" name="h${n}_2b" value="${esc(t[1])}"></td></tr>`;
+      <td class="range"><input type="time" name="h${n}_1a" value="${esc(m[0])}"> – <input type="time" name="h${n}_1b" value="${esc(m[1])}"></td>
+      <td class="range"><input type="time" name="h${n}_2a" value="${esc(t[0])}"> – <input type="time" name="h${n}_2b" value="${esc(t[1])}"></td></tr>`;
   }).join('');
   const treatments = [...sch.treatments, ...Array.from({ length: 4 }, () => ({ key: '', nombre: '', duracion: '' }))];
   const tRows = treatments
