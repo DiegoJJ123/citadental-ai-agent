@@ -1,6 +1,7 @@
 const OpenAI = require('openai');
 const db = require('../db/db');
 const clinic = require('./clinic');
+const agenda = require('./agenda');
 const info = require('./clinicInfo');
 const whatsapp = require('./whatsapp');
 const calendar = require('./calendar');
@@ -117,39 +118,41 @@ const TOOLS = [
   },
 ];
 
-function formatSlot(slot) {
+function formatSlot(slot, clinicRec) {
   const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-  const d = new Date(slot.date + 'T00:00:00');
-  return `${dias[d.getDay()]} ${slot.date} a las ${slot.time} (${slot.treatment})`;
+  const [y, m, d] = slot.date.split('-').map(Number);
+  const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const t = clinicRec ? agenda.findTreatment(clinicRec, slot.treatment) : null;
+  return `${dias[weekday]} ${slot.date} a las ${slot.time} (${t?.nombre || slot.treatment})`;
 }
 
-async function executeTool(name, input, phone, clinicRec) {
-  const clinicId = clinicRec.id;
+async function executeTool(name, input, phone, clinicRec, opts = {}) {
+  const fmt = (slot) => formatSlot(slot, clinicRec);
   switch (name) {
     case 'consultar_disponibilidad': {
-      const slots = clinic.listAvailableSlots(clinicId, { date: input.fecha, treatment: input.tratamiento });
+      const slots = await agenda.listAvailable(clinicRec, { date: input.fecha, treatment: input.tratamiento });
       if (!slots.length) return { encontrados: 0, mensaje: 'No hay huecos libres con esos criterios.' };
-      return { encontrados: slots.length, huecos: slots.map((s) => ({ id: s.id, texto: formatSlot(s) })) };
+      return { encontrados: slots.length, huecos: slots.map((s) => ({ id: s.id, texto: fmt(s) })) };
     }
     case 'reservar_cita': {
-      const r = clinic.bookAppointment(clinicId, { phone, name: input.nombre_paciente, slotId: input.slot_id });
+      const r = await agenda.book(clinicRec, { phone, name: input.nombre_paciente, slotId: input.slot_id, isTest: opts.isTest });
       if (!r.ok) return { ok: false, error: r.error };
-      return { ok: true, cita: formatSlot(r.slot) };
+      return { ok: true, cita: fmt(r.slot) };
     }
     case 'consultar_proxima_cita': {
-      const appt = clinic.getUpcomingAppointment(clinicId, phone);
+      const appt = agenda.upcoming(clinicRec, phone);
       if (!appt) return { encontrada: false };
-      return { encontrada: true, cita: formatSlot(appt) };
+      return { encontrada: true, cita: fmt(appt) };
     }
     case 'cancelar_cita': {
-      const r = clinic.cancelAppointment(clinicId, phone);
+      const r = await agenda.cancel(clinicRec, phone);
       if (!r.ok) return { ok: false, error: r.error };
-      return { ok: true, cita_liberada: formatSlot(r.freedSlot) };
+      return { ok: true, cita_liberada: fmt(r.freedSlot) };
     }
     case 'modificar_cita': {
-      const r = clinic.rescheduleAppointment(clinicId, { phone, newSlotId: input.nuevo_slot_id });
+      const r = await agenda.reschedule(clinicRec, { phone, newSlotId: input.nuevo_slot_id });
       if (!r.ok) return { ok: false, error: r.error };
-      return { ok: true, nueva_cita: formatSlot(r.slot) };
+      return { ok: true, nueva_cita: fmt(r.slot) };
     }
     case 'registrar_lead_demo': {
       if (!clinicRec.isDemo) return { error: 'Herramienta no disponible para esta clínica.' };
@@ -223,12 +226,12 @@ async function executeTool(name, input, phone, clinicRec) {
       db.prepare(
         `INSERT INTO conversations (clinic_id, phone, history, escalated) VALUES (?, ?, '[]', 1)
          ON CONFLICT(clinic_id, phone) DO UPDATE SET escalated = 1`
-      ).run(clinicId, phone);
+      ).run(clinicRec.id, phone);
       if (clinicRec.isDemo) {
         notifyOrgOsEscalation(phone, input.motivo).catch((err) =>
           console.error('Error notificando escalada al Org OS:', err)
         );
-      } else if (clinicRec.reception_phone) {
+      } else if (clinicRec.reception_phone && !opts.isTest) {
         // Aviso a la recepción de la clínica, desde el propio número de la clínica.
         const aviso = `🙋 Un paciente necesita atención de una persona.
 WhatsApp: +${phone}
@@ -401,6 +404,8 @@ function getClinicSystemPrompt(clinicRec) {
     month: 'long',
     day: 'numeric',
   });
+  const sch = agenda.scheduleOf(clinicRec);
+  const tratamientos = sch.treatments.map((t) => `- ${t.key}: ${t.nombre} (${t.duracion} min)`).join('\n');
   const datos = Object.keys(clinicRec.info || {}).length
     ? JSON.stringify(clinicRec.info, null, 2)
     : '(todavía no hay datos cargados)';
@@ -418,6 +423,10 @@ Puedes:
 DATOS DE LA CLÍNICA:
 ${datos}
 
+TRATAMIENTOS QUE SE PUEDEN RESERVAR (usa la clave en consultar_disponibilidad):
+${tratamientos}
+Si el paciente pide algo que no está en esta lista, ofrécele una revisión o pasa la conversación al equipo.
+
 Reglas obligatorias:
 - NUNCA inventes datos: ni precios, ni horarios, ni direcciones, ni tratamientos, ni mutuas. Si algo no está en los datos de arriba, dilo con naturalidad ("eso te lo confirma el equipo de la clínica") y ofrece pasar la conversación a una persona.
 - Los huecos de agenda SIEMPRE salen de consultar_disponibilidad. Si no hay huecos, dilo y ofrece pasar con el equipo.
@@ -431,13 +440,24 @@ function getSystemPrompt(clinicRec) {
   return clinicRec.isDemo ? getDemoSystemPrompt() : getClinicSystemPrompt(clinicRec);
 }
 
-// La captación de leads de demo solo existe en el número comercial.
-const CLINIC_TOOLS = TOOLS.filter((t) => t.function.name !== 'registrar_lead_demo');
+// Herramientas de una clínica real: sin captación de leads (solo existe en el
+// número comercial) y con SUS tratamientos en vez de la lista fija de la demo.
+function clinicTools(clinicRec) {
+  const keys = agenda.treatmentsOf(clinicRec).map((t) => t.key);
+  return TOOLS.filter((t) => t.function.name !== 'registrar_lead_demo').map((t) => {
+    if (t.function.name !== 'consultar_disponibilidad') return t;
+    const copy = JSON.parse(JSON.stringify(t));
+    copy.function.parameters.properties.tratamiento.enum = keys;
+    return copy;
+  });
+}
 
-async function handleIncomingMessage(clinicRec, phone, userText, contactName) {
+// opts.isTest: conversación de prueba desde el onboarding (las citas se marcan
+// como prueba y no se avisa al CRM).
+async function handleIncomingMessage(clinicRec, phone, userText, contactName, opts = {}) {
   clinic.getOrCreatePatient(clinicRec.id, phone, contactName);
 
-  if (clinicRec.isDemo) {
+  if (clinicRec.isDemo && !opts.isTest) {
     // Cualquier respuesta del lead lo mueve solo a GESTIONANDO en el CRM. El Org
     // OS es idempotente (esto se dispara en cada mensaje entrante) y no avisa a
     // nadie: el bot sigue trabajando la conversación por su cuenta.
@@ -466,7 +486,7 @@ async function handleIncomingMessage(clinicRec, phone, userText, contactName) {
   }
 
   const messages = [...history, { role: 'user', content: userText }];
-  const tools = clinicRec.isDemo ? TOOLS : CLINIC_TOOLS;
+  const tools = clinicRec.isDemo ? TOOLS : clinicTools(clinicRec);
   let escalatedNow = false;
   let finalText = '';
 
@@ -488,7 +508,20 @@ async function handleIncomingMessage(clinicRec, phone, userText, contactName) {
     for (const call of toolCalls) {
       if (call.function.name === 'escalar_a_humano') escalatedNow = true;
       const input = call.function.arguments ? JSON.parse(call.function.arguments) : {};
-      const result = await executeTool(call.function.name, input, phone, clinicRec);
+      let result;
+      try {
+        result = await executeTool(call.function.name, input, phone, clinicRec, opts);
+      } catch (err) {
+        // P. ej. Google Calendar desconectado o caído: el bot lo dice con
+        // naturalidad en vez de quedarse mudo, y queda registrado.
+        console.error(`Error en la herramienta ${call.function.name} (clínica ${clinicRec.id}):`, err);
+        try {
+          db.prepare('INSERT INTO error_log (clinic_id, phone, context, message) VALUES (?, ?, ?, ?)').run(
+            clinicRec.id, phone, `tool:${call.function.name}`, String(err.message || err)
+          );
+        } catch {}
+        result = { ok: false, error: 'No he podido acceder a la agenda en este momento. Ofrece al paciente que un compañero le contacte (escalar_a_humano).' };
+      }
       messages.push({
         role: 'tool',
         tool_call_id: call.id,
@@ -500,7 +533,7 @@ async function handleIncomingMessage(clinicRec, phone, userText, contactName) {
   saveHistory(clinicRec.id, phone, trimHistory(messages), escalatedNow);
 
   const replyText = finalText || 'Perdona, ¿puedes repetírmelo? No he entendido bien tu mensaje.';
-  if (clinicRec.isDemo) {
+  if (clinicRec.isDemo && !opts.isTest) {
     // Replicar la respuesta del bot al Org OS para que aparezca en la bandeja
     // /conversaciones. Fire-and-forget: no bloquea el retorno al webhook de
     // WhatsApp Cloud API, que ya está esperando la respuesta.

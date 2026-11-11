@@ -8,14 +8,15 @@ function redirectUri(req) {
   return `${req.protocol}://${req.get('host')}/auth/google/calendar/callback`;
 }
 
-function buildCalendarAuthUrl(req, state) {
+// opts.selectAccount: en el onboarding la clínica elige SU cuenta de Google.
+function buildCalendarAuthUrl(req, state, opts = {}) {
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: redirectUri(req),
     response_type: 'code',
     scope: CALENDAR_SCOPE,
     access_type: 'offline',
-    prompt: 'consent',
+    prompt: opts.selectAccount ? 'consent select_account' : 'consent',
     state,
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;

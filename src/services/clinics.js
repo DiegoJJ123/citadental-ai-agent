@@ -11,22 +11,26 @@ const UPDATABLE_FIELDS = [
   'whatsapp_phone_number_id',
   'whatsapp_display_phone',
   'whatsapp_token',
+  'whatsapp_waba_id',
   'reception_phone',
   'reception_email',
   'calendar_provider',
   'google_refresh_token',
   'google_calendar_id',
+  'schedule_json',
 ];
+
+function parseJson(text) {
+  try {
+    return JSON.parse(text || '{}');
+  } catch {
+    return {};
+  }
+}
 
 function parse(row) {
   if (!row) return null;
-  let info = {};
-  try {
-    info = JSON.parse(row.info_json || '{}');
-  } catch {
-    info = {};
-  }
-  return { ...row, info, isDemo: row.mode === 'demo' };
+  return { ...row, info: parseJson(row.info_json), schedule: parseJson(row.schedule_json), isDemo: row.mode === 'demo' };
 }
 
 function getClinicById(id) {
@@ -72,7 +76,7 @@ function createClinic({ name, website }) {
 function updateClinic(id, fields) {
   const entries = Object.entries(fields).filter(([k]) => UPDATABLE_FIELDS.includes(k));
   if (!entries.length) return getClinicById(id);
-  const values = entries.map(([k, v]) => (k === 'info_json' && typeof v !== 'string' ? JSON.stringify(v) : v));
+  const values = entries.map(([k, v]) => ((k === 'info_json' || k === 'schedule_json') && typeof v !== 'string' ? JSON.stringify(v) : v));
   db.prepare(
     `UPDATE clinics SET ${entries.map(([k]) => `${k} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
   ).run(...values, id);

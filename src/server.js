@@ -3,6 +3,7 @@ const express = require('express');
 const webhookRouter = require('./routes/webhook');
 const dashboardRouter = require('./routes/dashboard');
 const productMetricsRouter = require('./routes/productMetrics');
+const onboardingRouter = require('./routes/onboarding');
 const { startReminderScheduler } = require('./services/reminders');
 const { ensureDemoSlots } = require('./db/seed');
 
@@ -16,6 +17,7 @@ app.get('/health', (req, res) => res.json({ ok: true, model: require('./services
 app.use('/', webhookRouter);
 app.use('/', dashboardRouter);
 app.use('/', productMetricsRouter);
+app.use('/', onboardingRouter);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

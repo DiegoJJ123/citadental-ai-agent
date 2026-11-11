@@ -4,6 +4,7 @@ const auth = require('../services/auth');
 const calendar = require('../services/calendar');
 const db = require('../db/db');
 const { getDashboardStats } = require('../services/stats');
+const clinics = require('../services/clinics');
 
 const router = express.Router();
 
@@ -75,6 +76,7 @@ function dashboardPage() {
             ? '<span style="color:#4ade80; font-size:13px;">✓ Google Calendar conectado</span>'
             : '<a href="/dashboard/calendar/connect" style="color:#fbbf24; font-size:13px;">⚠ Calendar sin guardar en Render (se perderá en el próximo deploy) · reconectar</a>'
       }
+      <a href="/onboarding" style="color:#93c5fd;">Alta de clínicas</a>
       <a href="/dashboard/logout">Cerrar sesión</a>
     </div>
   </header>
@@ -248,7 +250,7 @@ router.get('/auth/google/callback', async (req, res) => {
     }
 
     auth.setSessionCookie(res, email);
-    res.redirect('/dashboard');
+    res.redirect(auth.popNextUrl(req, res) || '/dashboard');
   } catch (err) {
     console.error('Error en callback de Google OAuth:', err);
     res.redirect('/dashboard/login?error=Error al iniciar sesión con Google.');
@@ -274,11 +276,29 @@ router.get('/auth/google/calendar/callback', auth.requireDashboardAuth, async (r
       .find((c) => c.startsWith('citadental_calendar_state='));
     const expectedState = stateCookie ? decodeURIComponent(stateCookie.split('=')[1]) : null;
 
+    // El onboarding de una clínica usa este mismo callback (es la URL que hay
+    // registrada en Google) con el id de la clínica dentro del state: "xxx.c12".
+    const clinicMatch = /\.c(\d+)$/.exec(req.query.state || '');
+    const back = clinicMatch ? `/onboarding/${clinicMatch[1]}/calendario` : '/dashboard';
+
     if (!req.query.state || req.query.state !== expectedState) {
-      return res.redirect('/dashboard?error=Sesión de conexión con Calendar inválida, inténtalo de nuevo.');
+      return res.redirect(`${back}?error=${encodeURIComponent('La conexión con Google Calendar caducó. Inténtalo de nuevo.')}`);
     }
-    if (!req.query.code) {
-      return res.redirect('/dashboard?error=Google no devolvió un código de autorización.');
+    if (req.query.error || !req.query.code) {
+      return res.redirect(`${back}?error=${encodeURIComponent('No se dio permiso a Google Calendar.')}`);
+    }
+
+    if (clinicMatch) {
+      const clinic = clinics.getClinicById(Number(clinicMatch[1]));
+      if (!clinic || clinic.isDemo) return res.redirect('/onboarding');
+      try {
+        const token = await calendar.exchangeCodeForRefreshToken(req, req.query.code);
+        clinics.updateClinic(clinic.id, { google_refresh_token: token });
+        return res.redirect(`${back}?ok=1`);
+      } catch (err) {
+        console.error('Error conectando el Google Calendar de la clínica:', err);
+        return res.redirect(`${back}?error=${encodeURIComponent(err.message)}`);
+      }
     }
 
     const refreshToken = await calendar.exchangeCodeForRefreshToken(req, req.query.code);

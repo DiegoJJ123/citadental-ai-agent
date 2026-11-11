@@ -216,6 +216,25 @@ if (db.prepare('PRAGMA user_version').get().user_version < 1) {
   migrateToV1();
 }
 
+// ---------------------------------------------------------------------------
+// v2: agenda real por clínica (Google Calendar).
+// - clinics.schedule_json: horario, duración de cada tratamiento, antelación.
+// - slots.duration_min: duración del hueco (en la demo, 30).
+// - appointments.google_event_id: evento creado en el calendario de la clínica.
+// ---------------------------------------------------------------------------
+if (db.prepare('PRAGMA user_version').get().user_version < 2) {
+  db.transaction(() => {
+    db.exec(`
+    ALTER TABLE clinics ADD COLUMN schedule_json TEXT NOT NULL DEFAULT '{}';
+    ALTER TABLE slots ADD COLUMN duration_min INTEGER NOT NULL DEFAULT 30;
+    ALTER TABLE appointments ADD COLUMN google_event_id TEXT;
+    ALTER TABLE appointments ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE clinics ADD COLUMN whatsapp_waba_id TEXT;
+    `);
+  })();
+  raw.exec('PRAGMA user_version = 2;');
+}
+
 // La clínica demo responde por el número del entorno (WHATSAPP_PHONE_NUMBER_ID).
 if (process.env.WHATSAPP_PHONE_NUMBER_ID) {
   db.prepare('UPDATE clinics SET whatsapp_phone_number_id = ? WHERE id = ? AND whatsapp_phone_number_id IS NOT ?').run(

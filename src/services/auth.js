@@ -104,7 +104,7 @@ function createSessionCookie(email) {
 
 function setSessionCookie(res, email) {
   const value = createSessionCookie(email);
-  res.setHeader(
+  res.append(
     'Set-Cookie',
     `${SESSION_COOKIE}=${encodeURIComponent(value)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${Math.floor(SESSION_MAX_AGE_MS / 1000)}`
   );
@@ -129,9 +129,25 @@ function getSessionEmail(req) {
   return email;
 }
 
+const NEXT_COOKIE = 'citadental_next';
+
+// Solo rutas internas (evita redirecciones abiertas a otras webs).
+function safeNext(value) {
+  return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') ? value : null;
+}
+
+function popNextUrl(req, res) {
+  const next = safeNext(parseCookies(req)[NEXT_COOKIE]);
+  res.append('Set-Cookie', `${NEXT_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`);
+  return next;
+}
+
 function requireDashboardAuth(req, res, next) {
   const email = getSessionEmail(req);
   if (!email || !isAllowedEmail(email)) {
+    if (req.method === 'GET' && safeNext(req.originalUrl)) {
+      res.append('Set-Cookie', `${NEXT_COOKIE}=${encodeURIComponent(req.originalUrl)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=900`);
+    }
     return res.redirect('/dashboard/login');
   }
   req.dashboardEmail = email;
@@ -147,6 +163,8 @@ module.exports = {
   clearSessionCookie,
   getSessionEmail,
   requireDashboardAuth,
+  popNextUrl,
+  parseCookies,
   sign,
   unsign,
 };
