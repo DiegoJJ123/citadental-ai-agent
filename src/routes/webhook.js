@@ -153,6 +153,9 @@ router.post('/webhook/ycloud', async (req, res) => {
           logError(null, from, 'webhook:ycloud', `Mensaje a un número sin clínica asignada (${m.to})`);
           return;
         }
+        // Si la clínica aún responde por Meta directo, el mensaje ya lo atiende
+        // /webhook: contestar aquí también sería responder dos veces.
+        if (clinic.whatsapp_provider !== 'ycloud') return;
         // Mismo formato que Meta para reutilizar la lógica (id del mensaje de YCloud para "leído").
         const message = { ...m, id: m.id || m.wamid };
         await processIncoming({ clinic, from, message, contactName: m.customerProfile?.name, context: 'webhook:ycloud' });
