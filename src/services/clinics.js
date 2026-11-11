@@ -18,6 +18,10 @@ const UPDATABLE_FIELDS = [
   'google_refresh_token',
   'google_calendar_id',
   'schedule_json',
+  'whatsapp_provider',
+  'whatsapp_phone',
+  'reminder_template_name',
+  'reminder_template_status',
 ];
 
 function parseJson(text) {
@@ -44,6 +48,18 @@ function getDemoClinic() {
 function getClinicByPhoneNumberId(phoneNumberId) {
   if (!phoneNumberId) return null;
   return parse(db.prepare('SELECT * FROM clinics WHERE whatsapp_phone_number_id = ?').get(String(phoneNumberId)));
+}
+
+// '+34 600 11 22 33' / '34600112233' → '+34600112233'
+function toE164(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  return digits ? `+${digits}` : null;
+}
+
+function getClinicByWhatsappPhone(phone) {
+  const e164 = toE164(phone);
+  if (!e164) return null;
+  return parse(db.prepare('SELECT * FROM clinics WHERE whatsapp_phone = ?').get(e164));
 }
 
 function listClinics() {
@@ -92,6 +108,8 @@ module.exports = {
   getClinicById,
   getDemoClinic,
   getClinicByPhoneNumberId,
+  getClinicByWhatsappPhone,
+  toE164,
   listClinics,
   createClinic,
   updateClinic,

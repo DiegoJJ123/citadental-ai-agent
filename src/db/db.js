@@ -235,6 +235,32 @@ if (db.prepare('PRAGMA user_version').get().user_version < 2) {
   raw.exec('PRAGMA user_version = 2;');
 }
 
+// ---------------------------------------------------------------------------
+// v3: WhatsApp a través de YCloud (coexistencia) y plantilla de recordatorio.
+// - clinics.whatsapp_provider: 'meta' (Cloud API directa, como la demo hasta
+//   ahora) o 'ycloud'.
+// - clinics.whatsapp_phone: número de la clínica en E.164 con '+' (YCloud lo
+//   usa como remitente y para saber a qué clínica llega cada mensaje).
+// - clinics.reminder_template_*: plantilla de recordatorio en su cuenta de WA.
+// - webhook_events: ids de eventos ya procesados (YCloud reintenta envíos).
+// ---------------------------------------------------------------------------
+if (db.prepare('PRAGMA user_version').get().user_version < 3) {
+  db.transaction(() => {
+    db.exec(`
+    ALTER TABLE clinics ADD COLUMN whatsapp_provider TEXT NOT NULL DEFAULT 'meta';
+    ALTER TABLE clinics ADD COLUMN whatsapp_phone TEXT;
+    ALTER TABLE clinics ADD COLUMN reminder_template_name TEXT;
+    ALTER TABLE clinics ADD COLUMN reminder_template_status TEXT;
+    CREATE UNIQUE INDEX idx_clinics_whatsapp_phone ON clinics(whatsapp_phone) WHERE whatsapp_phone IS NOT NULL;
+    CREATE TABLE webhook_events (
+      id TEXT PRIMARY KEY,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    `);
+  })();
+  raw.exec('PRAGMA user_version = 3;');
+}
+
 // La clínica demo responde por el número del entorno (WHATSAPP_PHONE_NUMBER_ID).
 if (process.env.WHATSAPP_PHONE_NUMBER_ID) {
   db.prepare('UPDATE clinics SET whatsapp_phone_number_id = ? WHERE id = ? AND whatsapp_phone_number_id IS NOT ?').run(

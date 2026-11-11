@@ -11,6 +11,8 @@ const calendar = require('../services/calendar');
 const gcal = require('../services/googleCalendar');
 const { INFO_FIELDS, extractClinicInfo } = require('../services/siteExtractor');
 const { handleIncomingMessage } = require('../services/agent');
+const ycloud = require('../services/ycloud');
+const templates = require('../services/templates');
 
 const router = express.Router();
 const form = express.urlencoded({ extended: false, limit: '200kb' });
@@ -40,7 +42,6 @@ const PROVIDERS = [
   { key: 'cliniccloud', name: 'Clinic Cloud', desc: 'Sin conexión directa por ahora. Se usa un Google Calendar dedicado a las citas del asistente.' },
   { key: 'doctoralia', name: 'Doctoralia', desc: 'Próximamente (pendiente de alta como integrador en Docplanner).', disabled: true },
 ];
-const GRAPH = 'https://graph.facebook.com/v21.0';
 
 // ---------------------------------------------------------------------------
 // Utilidades de presentación
@@ -124,7 +125,7 @@ function stepDone(clinic, key) {
     case 'calendario':
       return Boolean(clinic.google_refresh_token);
     case 'whatsapp':
-      return Boolean(clinic.whatsapp_phone_number_id);
+      return Boolean(clinic.whatsapp_phone || clinic.whatsapp_phone_number_id);
     case 'recepcion':
       return Boolean(clinic.reception_phone || clinic.reception_email);
     case 'prueba':
@@ -155,6 +156,8 @@ function stepActions(clinic, step, { submit = 'Guardar y continuar', back = true
 
 // Carga la clínica de la URL (nunca la demo) o 404.
 function loadClinic(req, res, next) {
+  // Solo ids numéricos: /onboarding/demo/... y /onboarding/nueva son otras rutas.
+  if (!/^\d+$/.test(req.params.id)) return next('route');
   const clinic = clinics.getClinicById(Number(req.params.id));
   if (!clinic || clinic.isDemo) return res.status(404).send(page(req, { title: 'No encontrada', body: '<h1>Clínica no encontrada</h1><p><a href="/onboarding">Volver</a></p>' }));
   req.clinic = clinic;
@@ -186,7 +189,7 @@ router.get('/onboarding', (req, res) => {
     page(req, {
       title: 'Clínicas',
       body: `<div class="actions" style="margin-top:0"><div><h1>Clínicas</h1><p class="sub">Da de alta una clínica nueva o continúa un alta a medias.</p></div>
-        <a class="btn" href="/onboarding/nueva">+ Nueva clínica</a></div>
+        <span><a class="btn sec" href="/onboarding/demo/whatsapp">WhatsApp de la demo</a> <a class="btn" href="/onboarding/nueva">+ Nueva clínica</a></span></div>
         ${list.length ? `<table><thead><tr><th>Clínica</th><th>Estado</th><th>WhatsApp</th><th>Mensajes este mes</th><th>Progreso</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="info">Todavía no hay clínicas. Pulsa «Nueva clínica» para empezar.</div>'}`,
     })
   );
@@ -438,83 +441,169 @@ router.post('/onboarding/:id/calendario/desconectar', loadClinic, (req, res) => 
 });
 
 // ---------------------------------------------------------------------------
-// Paso 5: WhatsApp
+// Paso 5: WhatsApp (a través de YCloud, en coexistencia con la app)
 // ---------------------------------------------------------------------------
-async function graph(path, token, { method = 'GET', body } = {}) {
-  const res = await fetch(`${GRAPH}/${path}`, {
-    method,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data?.error?.message || `Meta respondió ${res.status}`);
-  return data;
+const YCLOUD_EVENTS = ['whatsapp.inbound_message.received', 'whatsapp.smb.message.echoes', 'whatsapp.template.reviewed'];
+
+function publicBaseUrl(req) {
+  return process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
 }
+
+// Se asegura de que la cuenta de YCloud manda los mensajes a este bot. El
+// secreto de firma solo lo da YCloud al crear el endpoint: se guarda en la BD
+// (disco del servidor) y nunca se muestra.
+async function ensureYCloudWebhook(req) {
+  const url = `${publicBaseUrl(req)}/webhook/ycloud`;
+  const haveSecret =
+    process.env.YCLOUD_WEBHOOK_SECRET || db.prepare("SELECT value FROM settings WHERE key = 'ycloud_webhook_secret'").get()?.value;
+  const list = await ycloud.listWebhookEndpoints();
+  const existing = (list?.items || []).find((e) => e.url === url);
+  if (existing && haveSecret) return 'ya configurado';
+  if (existing && !haveSecret) {
+    throw new Error(
+      `Ya existe un webhook de YCloud hacia ${url} pero no tengo su secreto. Bórralo en YCloud (Developers → Webhooks) y vuelve a pulsar «Comprobar y conectar».`
+    );
+  }
+  const created = await ycloud.createWebhookEndpoint({ url, enabledEvents: YCLOUD_EVENTS, description: 'CitaDental AI bot' });
+  if (!created?.secret) throw new Error('YCloud no devolvió el secreto del webhook');
+  db.prepare("INSERT INTO settings (key, value) VALUES ('ycloud_webhook_secret', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(
+    created.secret
+  );
+  return 'creado';
+}
+
+const TEMPLATE_LABEL = {
+  APPROVED: '✅ Aprobada',
+  PENDING: '⏳ En revisión por Meta (suele tardar de minutos a unas horas)',
+  REJECTED: '❌ Rechazada',
+  IN_APPEAL: '⏳ En apelación',
+  PAUSED: '⚠️ Pausada por Meta',
+  DISABLED: '❌ Desactivada por Meta',
+};
 
 router.get('/onboarding/:id/whatsapp', loadClinic, (req, res) => {
   const { clinic } = req;
+  const connected = clinic.whatsapp_provider === 'ycloud' && clinic.whatsapp_phone;
+  const tplStatus = clinic.reminder_template_status;
   res.send(
     page(req, {
       title: 'WhatsApp',
       clinic,
       step: 'whatsapp',
       body: `<h1>5. Conectar WhatsApp</h1>
-        <p class="sub">La clínica sigue usando su app de WhatsApp Business de siempre (modo coexistencia). El asistente responde por el mismo número.</p>
-        ${clinic.whatsapp_display_phone ? `<div class="ok">✓ Número conectado: <strong>${esc(clinic.whatsapp_display_phone)}</strong></div>` : ''}
-        <div class="info"><strong>Mientras Meta aprueba la conexión en un clic</strong>, el número se conecta desde Meta Business:</div>
+        <p class="sub">El número se conecta a través de <strong>YCloud</strong> en modo coexistencia: la clínica sigue usando su app de WhatsApp Business de siempre y el asistente responde por el mismo número.</p>
+        ${connected ? `<div class="ok">✓ Número conectado: <strong>${esc(clinic.whatsapp_display_phone || clinic.whatsapp_phone)}</strong></div>` : ''}
+        ${
+          connected
+            ? `<h2>Plantilla de recordatorio de citas</h2>
+               <p class="hint">WhatsApp exige una plantilla aprobada para recordar la cita a pacientes que no han escrito en las últimas 24 h.</p>
+               <div class="${templates.isApproved(tplStatus) ? 'ok' : 'info'}">Estado: <strong>${esc(TEMPLATE_LABEL[tplStatus] || tplStatus || 'sin crear')}</strong>
+               ${tplStatus === 'REJECTED' ? ' — revisa el motivo en YCloud (Plantillas).' : ''}</div>
+               <form method="post" action="/onboarding/${clinic.id}/whatsapp/plantilla" style="display:inline"><button class="btn sec" type="submit">${tplStatus ? 'Actualizar estado' : 'Crear plantilla'}</button></form>`
+            : ''
+        }
+        <h2>${connected ? 'Cambiar de número' : 'Cómo conectarlo'}</h2>
         <ol class="guide">
-          <li>Abre <a href="https://business.facebook.com/latest/whatsapp_manager/phone_numbers" target="_blank" rel="noopener">WhatsApp Manager en Meta Business</a> con la cuenta de la clínica y añade su número (opción «usar la app de WhatsApp Business que ya tienes»).</li>
-          <li>Comparte la cuenta de WhatsApp de la clínica con el negocio de CitaDental AI (o crea un token de acceso para ella).</li>
-          <li>Copia aquí el <strong>Phone number ID</strong> y el <strong>WhatsApp Business Account ID</strong> que aparecen en Meta.</li>
-          <li>Pulsa «Comprobar y conectar»: verificaremos el número y lo suscribiremos al asistente.</li>
+          <li>Ten a mano el <strong>móvil de la clínica</strong> con la app de <strong>WhatsApp Business</strong> (versión 2.24.17 o superior).</li>
+          <li>Abre <a href="https://www.ycloud.com/console/" target="_blank" rel="noopener">la consola de YCloud</a> → <em>Crear canal → WhatsApp Business App Coexistence</em> y conecta el número escaneando el QR con el móvil de la clínica (o con Facebook).</li>
+          <li>Cuando YCloud lo muestre como conectado, escribe aquí el número y pulsa «Comprobar y conectar»: comprobaremos que está activo, lo enlazaremos con el asistente y crearemos la plantilla de recordatorio.</li>
         </ol>
-        <form method="post" data-busy="Comprobando con Meta…">
-          <div class="grid2">
-            <div><label>Phone number ID</label><input type="text" name="phone_number_id" required value="${esc(clinic.whatsapp_phone_number_id || '')}" placeholder="1052831911250342"></div>
-            <div><label>WhatsApp Business Account ID</label><input type="text" name="waba_id" value="${esc(clinic.whatsapp_waba_id || '')}" placeholder="4944851238987440"></div>
-          </div>
-          <label>Token de acceso <span class="hint">(opcional: vacío = usar el token de CitaDental AI${clinic.whatsapp_token ? '; ya hay uno guardado, déjalo vacío para mantenerlo' : ''})</span></label>
-          <input type="password" name="token" autocomplete="off" value="">
+        <form method="post" data-busy="Comprobando con YCloud…">
+          <label>Número de WhatsApp de la clínica <span class="hint">(con prefijo, p. ej. +34 600 11 22 33)</span></label>
+          <input type="tel" name="phone" required value="${esc(clinic.whatsapp_phone || '')}" placeholder="+34 600 11 22 33">
           ${stepActions(clinic, 'whatsapp', { submit: 'Comprobar y conectar' })}
         </form>`,
     })
   );
 });
 
-router.post('/onboarding/:id/whatsapp', loadClinic, form, async (req, res) => {
-  const { clinic } = req;
-  const phoneNumberId = String(req.body.phone_number_id || '').trim();
-  const wabaId = String(req.body.waba_id || '').trim();
-  const newToken = String(req.body.token || '').trim();
-  if (!/^\d{6,30}$/.test(phoneNumberId)) return go(res, clinic, 'whatsapp', { error: 'El Phone number ID debe ser un número.' });
-  const other = clinics.getClinicByPhoneNumberId(phoneNumberId);
-  if (other && other.id !== clinic.id) return go(res, clinic, 'whatsapp', { error: `Ese número ya está asignado a «${other.name}».` });
+// Conecta una clínica (o la demo) a su número en YCloud. Devuelve
+// { ok: mensaje } o { error: mensaje }.
+async function connectYCloud(req, clinic, rawPhone, extra = {}) {
+  const phone = clinics.toE164(rawPhone);
+  if (!phone || phone.length < 10) return { error: 'Escribe el número completo con prefijo (p. ej. +34 600 11 22 33).' };
+  const other = clinics.getClinicByWhatsappPhone(phone);
+  if (other && other.id !== clinic.id) return { error: `Ese número ya está asignado a «${other.name}».` };
 
-  const token = newToken || clinic.whatsapp_token || process.env.WHATSAPP_TOKEN;
-  let display;
+  let number;
   try {
-    const info = await graph(`${phoneNumberId}?fields=display_phone_number,verified_name`, token);
-    display = `${info.display_phone_number}${info.verified_name ? ` (${info.verified_name})` : ''}`;
+    number = await ycloud.findPhoneNumber(phone);
   } catch (err) {
-    return go(res, clinic, 'whatsapp', { error: `Meta no reconoce ese número con este token: ${err.message}` });
+    return { error: `No he podido consultar YCloud: ${err.message}` };
   }
-  let subscribed = '';
-  if (wabaId) {
-    try {
-      await graph(`${wabaId}/subscribed_apps`, token, { method: 'POST' });
-      subscribed = ' y suscrito al asistente';
-    } catch (err) {
-      return go(res, clinic, 'whatsapp', { error: `Número verificado (${display}) pero no se pudo suscribir la cuenta al asistente: ${err.message}` });
-    }
+  if (!number) return { error: `El número ${phone} no aparece en la cuenta de YCloud. Conéctalo primero en la consola de YCloud.` };
+  if (number.status !== 'CONNECTED') {
+    return { error: `YCloud muestra el número ${phone} con estado «${number.status}». Debe estar «CONNECTED» antes de continuar.` };
   }
+
+  try {
+    await ensureYCloudWebhook(req);
+  } catch (err) {
+    return { error: `Número correcto, pero no se pudo enlazar YCloud con el asistente: ${err.message}` };
+  }
+
+  const display = `${number.displayPhoneNumber || phone}${number.verifiedName ? ` (${number.verifiedName})` : ''}`;
   const updated = clinics.updateClinic(clinic.id, {
-    whatsapp_phone_number_id: phoneNumberId,
-    whatsapp_waba_id: wabaId || null,
+    whatsapp_provider: 'ycloud',
+    whatsapp_phone: phone,
+    whatsapp_waba_id: number.wabaId,
     whatsapp_display_phone: display,
-    ...(newToken ? { whatsapp_token: newToken } : {}),
-    onboarding_step: 'recepcion',
+    ...extra,
   });
-  go(res, updated, nextStep('whatsapp'), { ok: `Número ${display} verificado${subscribed}.` });
+
+  let tplMsg = '';
+  try {
+    const t = await templates.ensureReminderTemplate(updated);
+    tplMsg = templates.isApproved(t.status) ? ' Plantilla de recordatorio aprobada.' : ' Plantilla de recordatorio enviada a Meta para su aprobación.';
+  } catch (err) {
+    tplMsg = ` Aviso: no se pudo crear la plantilla de recordatorio (${err.message}). Puedes reintentarlo.`;
+  }
+  return { ok: `Número ${display} conectado por YCloud.${tplMsg}` };
+}
+
+router.post('/onboarding/:id/whatsapp', loadClinic, form, async (req, res) => {
+  const r = await connectYCloud(req, req.clinic, req.body.phone, { onboarding_step: 'recepcion' });
+  if (r.error) return go(res, req.clinic, 'whatsapp', { error: r.error });
+  go(res, req.clinic, nextStep('whatsapp'), { ok: r.ok });
+});
+
+// Pasar el número de la DEMO (bot comercial) de Meta directo a YCloud. Se
+// hace cuando su número ya está conectado en YCloud; a partir de ahí las
+// copias que sigan llegando por Meta se ignoran (nunca contesta dos veces).
+router.get('/onboarding/demo/whatsapp', (req, res) => {
+  const demo = clinics.getDemoClinic();
+  const viaYCloud = demo.whatsapp_provider === 'ycloud';
+  res.send(
+    page(req, {
+      title: 'WhatsApp de la demo',
+      body: `<h1>WhatsApp del bot comercial (demo)</h1>
+        <div class="${viaYCloud ? 'ok' : 'info'}">Ahora mismo responde por: <strong>${viaYCloud ? `YCloud (${esc(demo.whatsapp_display_phone || demo.whatsapp_phone)})` : 'Meta directo'}</strong>
+        · Plantilla de recordatorio: <strong>${esc(TEMPLATE_LABEL[demo.reminder_template_status] || demo.reminder_template_status || 'sin crear')}</strong></div>
+        <p class="sub">Conecta primero el número de la demo en la consola de YCloud (coexistencia, escaneando el QR con el móvil de ese número). Después escríbelo aquí.</p>
+        <form method="post" data-busy="Comprobando con YCloud…">
+          <label>Número de la demo</label>
+          <input type="tel" name="phone" required value="${esc(demo.whatsapp_phone || '+34 642 06 90 50')}">
+          <div class="actions"><a class="btn sec" href="/onboarding">← Clínicas</a><button class="btn" type="submit">Pasar la demo a YCloud</button></div>
+        </form>`,
+    })
+  );
+});
+
+router.post('/onboarding/demo/whatsapp', form, async (req, res) => {
+  const r = await connectYCloud(req, clinics.getDemoClinic(), req.body.phone);
+  const q = new URLSearchParams(r.error ? { error: r.error } : { ok: r.ok }).toString();
+  res.redirect(`/onboarding/demo/whatsapp?${q}`);
+});
+
+router.post('/onboarding/:id/whatsapp/plantilla', loadClinic, async (req, res) => {
+  try {
+    const t = req.clinic.reminder_template_name
+      ? { status: await templates.refreshStatus(req.clinic) }
+      : await templates.ensureReminderTemplate(req.clinic);
+    go(res, req.clinic, 'whatsapp', { ok: `Plantilla de recordatorio: ${TEMPLATE_LABEL[t.status] || t.status}` });
+  } catch (err) {
+    go(res, req.clinic, 'whatsapp', { error: `Plantilla de recordatorio: ${err.message}` });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -637,6 +726,14 @@ router.get('/onboarding/:id/activar', loadClinic, async (req, res) => {
     { ok: stepDone(clinic, 'agenda'), label: 'Agenda y tratamientos configurados', step: 'agenda', required: true },
     { ok: calendarOk, label: `Google Calendar: ${calendarMsg}`, step: 'calendario', required: true },
     { ok: stepDone(clinic, 'whatsapp'), label: `WhatsApp: ${clinic.whatsapp_display_phone || 'sin conectar'}`, step: 'whatsapp', required: true },
+    {
+      ok: templates.isApproved(clinic.reminder_template_status),
+      label: templates.isApproved(clinic.reminder_template_status)
+        ? 'Plantilla de recordatorio aprobada'
+        : `Plantilla de recordatorio: ${TEMPLATE_LABEL[clinic.reminder_template_status] || 'sin crear'} (sin ella solo llegan recordatorios a quien escribió en las últimas 24 h)`,
+      step: 'whatsapp',
+      required: false,
+    },
     { ok: stepDone(clinic, 'recepcion'), label: 'Avisos a recepción', step: 'recepcion', required: true },
     { ok: stepDone(clinic, 'prueba'), label: 'Asistente probado', step: 'prueba', required: false },
     { ok: pendingTests === 0, label: pendingTests ? `Quedan ${pendingTests} cita(s) de prueba en el calendario (reinicia la prueba para borrarlas)` : 'Sin citas de prueba pendientes', step: 'prueba', required: false },
@@ -697,7 +794,7 @@ router.post('/onboarding/:id/estado', loadClinic, form, async (req, res) => {
   const status = req.body.status === 'activa' ? 'activa' : 'pausada';
   if (status === 'activa') {
     const c = req.clinic;
-    if (!(stepDone(c, 'datos') && stepDone(c, 'agenda') && c.google_refresh_token && c.whatsapp_phone_number_id && stepDone(c, 'recepcion'))) {
+    if (!(stepDone(c, 'datos') && stepDone(c, 'agenda') && c.google_refresh_token && stepDone(c, 'whatsapp') && stepDone(c, 'recepcion'))) {
       return go(res, c, 'activar', { error: 'Faltan pasos obligatorios.' });
     }
     try {
