@@ -33,9 +33,9 @@ router.post('/api/product-control/pause-conversation', express.json(), (req, res
     return res.status(400).json({ error: 'Falta el número de teléfono' });
   }
   db.prepare(
-    "INSERT INTO conversations (phone, history, escalated) VALUES (?, '[]', 1) " +
-      'ON CONFLICT(phone) DO UPDATE SET escalated = 1'
-  ).run(phone);
+    "INSERT INTO conversations (clinic_id, phone, history, escalated) VALUES (?, ?, '[]', 1) " +
+      'ON CONFLICT(clinic_id, phone) DO UPDATE SET escalated = 1'
+  ).run(db.DEMO_CLINIC_ID, phone);
   res.json({ ok: true });
 });
 
@@ -45,7 +45,7 @@ router.post('/api/product-control/resume-conversation', express.json(), (req, re
   if (!phone) {
     return res.status(400).json({ error: 'Falta el número de teléfono' });
   }
-  db.prepare('UPDATE conversations SET escalated = 0 WHERE phone = ?').run(phone);
+  db.prepare('UPDATE conversations SET escalated = 0 WHERE clinic_id = ? AND phone = ?').run(db.DEMO_CLINIC_ID, phone);
   res.json({ ok: true });
 });
 
@@ -54,8 +54,8 @@ router.post('/api/product-control/resume-conversation', express.json(), (req, re
 router.get('/api/product-control/blocked-conversations', (req, res) => {
   if (!requireApiKey(req, res)) return;
   const rows = db
-    .prepare('SELECT phone, updated_at FROM conversations WHERE escalated = 1 ORDER BY updated_at DESC')
-    .all();
+    .prepare('SELECT phone, updated_at FROM conversations WHERE clinic_id = ? AND escalated = 1 ORDER BY updated_at DESC')
+    .all(db.DEMO_CLINIC_ID);
   res.json({ blocked: rows });
 });
 

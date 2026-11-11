@@ -3,9 +3,11 @@ const crypto = require('crypto');
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const SESSION_SECRET = process.env.SESSION_SECRET || 'dev-secret-cambia-esto';
-const ALLOWED_DASHBOARD_EMAIL = (process.env.ALLOWED_DASHBOARD_EMAIL || '').toLowerCase();
+const ALLOWED_DASHBOARD_EMAIL = (process.env.ALLOWED_DASHBOARD_EMAIL || 'diegoezequiel02@gmail.com').toLowerCase();
 const SESSION_COOKIE = 'citadental_session';
-const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
+// 8 horas: el panel se abre también en ordenadores de clínicas, la sesión no
+// debe quedarse abierta días.
+const SESSION_MAX_AGE_MS = 8 * 60 * 60 * 1000;
 
 function baseUrl(req) {
   return `${req.protocol}://${req.get('host')}`;

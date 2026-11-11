@@ -308,7 +308,7 @@ router.post('/api/reset-conversation', express.json(), (req, res) => {
   if (!phone) {
     return res.status(400).json({ error: 'Falta el número de teléfono' });
   }
-  db.prepare('DELETE FROM conversations WHERE phone = ?').run(phone);
+  db.prepare('DELETE FROM conversations WHERE clinic_id = ? AND phone = ?').run(db.DEMO_CLINIC_ID, phone);
   res.json({ ok: true });
 });
 

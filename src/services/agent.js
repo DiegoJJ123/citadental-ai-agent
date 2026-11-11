@@ -123,34 +123,36 @@ function formatSlot(slot) {
   return `${dias[d.getDay()]} ${slot.date} a las ${slot.time} (${slot.treatment})`;
 }
 
-async function executeTool(name, input, phone) {
+async function executeTool(name, input, phone, clinicRec) {
+  const clinicId = clinicRec.id;
   switch (name) {
     case 'consultar_disponibilidad': {
-      const slots = clinic.listAvailableSlots({ date: input.fecha, treatment: input.tratamiento });
+      const slots = clinic.listAvailableSlots(clinicId, { date: input.fecha, treatment: input.tratamiento });
       if (!slots.length) return { encontrados: 0, mensaje: 'No hay huecos libres con esos criterios.' };
       return { encontrados: slots.length, huecos: slots.map((s) => ({ id: s.id, texto: formatSlot(s) })) };
     }
     case 'reservar_cita': {
-      const r = clinic.bookAppointment({ phone, name: input.nombre_paciente, slotId: input.slot_id });
+      const r = clinic.bookAppointment(clinicId, { phone, name: input.nombre_paciente, slotId: input.slot_id });
       if (!r.ok) return { ok: false, error: r.error };
       return { ok: true, cita: formatSlot(r.slot) };
     }
     case 'consultar_proxima_cita': {
-      const appt = clinic.getUpcomingAppointment(phone);
+      const appt = clinic.getUpcomingAppointment(clinicId, phone);
       if (!appt) return { encontrada: false };
       return { encontrada: true, cita: formatSlot(appt) };
     }
     case 'cancelar_cita': {
-      const r = clinic.cancelAppointment(phone);
+      const r = clinic.cancelAppointment(clinicId, phone);
       if (!r.ok) return { ok: false, error: r.error };
       return { ok: true, cita_liberada: formatSlot(r.freedSlot) };
     }
     case 'modificar_cita': {
-      const r = clinic.rescheduleAppointment({ phone, newSlotId: input.nuevo_slot_id });
+      const r = clinic.rescheduleAppointment(clinicId, { phone, newSlotId: input.nuevo_slot_id });
       if (!r.ok) return { ok: false, error: r.error };
       return { ok: true, nueva_cita: formatSlot(r.slot) };
     }
     case 'registrar_lead_demo': {
+      if (!clinicRec.isDemo) return { error: 'Herramienta no disponible para esta clínica.' };
       let calendarEvent = null;
       if (input.fecha_hora_iso) {
         try {
@@ -219,12 +221,23 @@ async function executeTool(name, input, phone) {
     }
     case 'escalar_a_humano': {
       db.prepare(
-        `INSERT INTO conversations (phone, history, escalated) VALUES (?, '[]', 1)
-         ON CONFLICT(phone) DO UPDATE SET escalated = 1`
-      ).run(phone);
-      notifyOrgOsEscalation(phone, input.motivo).catch((err) =>
-        console.error('Error notificando escalada al Org OS:', err)
-      );
+        `INSERT INTO conversations (clinic_id, phone, history, escalated) VALUES (?, ?, '[]', 1)
+         ON CONFLICT(clinic_id, phone) DO UPDATE SET escalated = 1`
+      ).run(clinicId, phone);
+      if (clinicRec.isDemo) {
+        notifyOrgOsEscalation(phone, input.motivo).catch((err) =>
+          console.error('Error notificando escalada al Org OS:', err)
+        );
+      } else if (clinicRec.reception_phone) {
+        // Aviso a la recepción de la clínica, desde el propio número de la clínica.
+        const aviso = `🙋 Un paciente necesita atención de una persona.
+WhatsApp: +${phone}
+Motivo: ${input.motivo || '—'}
+El asistente ha dejado de responder en ese chat.`;
+        whatsapp.sendText(clinicRec.reception_phone, aviso, clinicRec).catch((err) =>
+          console.error('Error avisando a recepción de la escalada:', err)
+        );
+      }
       return { ok: true };
     }
     default:
@@ -299,7 +312,7 @@ function notifyLeadRepliedOnly(phone, previewLabel) {
   );
 }
 
-function getSystemPrompt() {
+function getDemoSystemPrompt() {
   const hoy = new Date().toLocaleDateString('es-ES', {
     timeZone: 'Europe/Madrid',
     weekday: 'long',
@@ -352,48 +365,100 @@ Reglas importantes:
 - No reveles detalles técnicos sobre qué modelo o proveedor de IA te da soporte; eres "el asistente virtual de CitaDental AI".`;
 }
 
-async function getHistory(phone) {
-  const row = db.prepare('SELECT history, escalated FROM conversations WHERE phone = ?').get(phone);
+async function getHistory(clinicId, phone) {
+  const row = db.prepare('SELECT history, escalated FROM conversations WHERE clinic_id = ? AND phone = ?').get(clinicId, phone);
   if (!row) return { history: [], escalated: false };
   return { history: JSON.parse(row.history), escalated: !!row.escalated };
 }
 
-function saveHistory(phone, history, escalated) {
+function saveHistory(clinicId, phone, history, escalated) {
+  const json = JSON.stringify(history);
   db.prepare(
-    `INSERT INTO conversations (phone, history, escalated, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT(phone) DO UPDATE SET history = ?, escalated = ?, updated_at = CURRENT_TIMESTAMP`
-  ).run(phone, JSON.stringify(history), escalated ? 1 : 0, JSON.stringify(history), escalated ? 1 : 0);
+    `INSERT INTO conversations (clinic_id, phone, history, escalated, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(clinic_id, phone) DO UPDATE SET history = ?, escalated = ?, updated_at = CURRENT_TIMESTAMP`
+  ).run(clinicId, phone, json, escalated ? 1 : 0, json, escalated ? 1 : 0);
 }
 
-// Recorta el historial para no crecer sin límite (mantiene los últimos N turnos)
+// Recorta el historial para no crecer sin límite (mantiene los últimos N
+// mensajes). El corte nunca puede empezar por una respuesta de herramienta ni
+// por una llamada a herramienta sin su respuesta: OpenAI rechaza ese historial
+// y el bot se quedaría mudo en conversaciones largas. Se empieza siempre en un
+// mensaje del usuario.
 function trimHistory(history, maxMessages = 20) {
   if (history.length <= maxMessages) return history;
-  return history.slice(history.length - maxMessages);
+  let trimmed = history.slice(history.length - maxMessages);
+  const firstUser = trimmed.findIndex((m) => m.role === 'user');
+  trimmed = firstUser === -1 ? [] : trimmed.slice(firstUser);
+  return trimmed;
 }
 
-async function handleIncomingMessage(phone, userText, contactName) {
-  clinic.getOrCreatePatient(phone, contactName);
+// Instrucciones para una clínica real: responde SOLO con sus datos reales.
+function getClinicSystemPrompt(clinicRec) {
+  const hoy = new Date().toLocaleDateString('es-ES', {
+    timeZone: 'Europe/Madrid',
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+  const datos = Object.keys(clinicRec.info || {}).length
+    ? JSON.stringify(clinicRec.info, null, 2)
+    : '(todavía no hay datos cargados)';
 
-  // Cualquier respuesta del lead lo mueve solo a GESTIONANDO en el CRM. El Org
-  // OS es idempotente (esto se dispara en cada mensaje entrante) y no avisa a
-  // nadie: el bot sigue trabajando la conversación por su cuenta.
-  notifyOrgOs('/api/leads/replied', { phone, preview: userText || '' }).catch((err) =>
-    console.error('Error notificando respuesta del lead al Org OS:', err)
-  );
+  return `Hoy es ${hoy} (hora de España, Europe/Madrid). Usa esta fecha para calcular fechas relativas ("mañana", "el jueves", etc.).
 
-  // Replicar el mensaje entrante a la bandeja del Org OS. Si el numero está
-  // en modo CLOUD_API puro (sin coexistencia), Diego no puede leer las
-  // conversaciones desde la app WhatsApp Business; esto es lo que le permite
-  // verlas en /conversaciones. Fire-and-forget: si falla, la conversacion
-  // del bot con el paciente sigue igual.
-  notifyOrgOs('/api/leads/message-log', {
-    phone,
-    direction: 'INBOUND',
-    body: userText || '',
-    senderName: contactName || null,
-  }).catch((err) => console.error('Error registrando mensaje entrante en el Org OS:', err));
+Eres el asistente virtual de WhatsApp de la clínica dental "${clinicRec.name}". Atiendes a sus pacientes en español de España, con tono cercano, cálido y profesional. Frases cortas, sin tecnicismos. Como mucho un emoji ocasional.
 
-  const { history, escalated } = await getHistory(phone);
+Puedes:
+- Reservar citas: usa consultar_disponibilidad para ofrecer huecos reales, confirma el hueco elegido, pide el nombre del paciente si no lo tienes y usa reservar_cita.
+- Modificar citas (consultar_proxima_cita, consultar_disponibilidad, modificar_cita) y cancelarlas (cancelar_cita).
+- Decir al paciente cuándo es su próxima cita (consultar_proxima_cita).
+- Responder preguntas sobre la clínica usando EXCLUSIVAMENTE estos datos:
+
+DATOS DE LA CLÍNICA:
+${datos}
+
+Reglas obligatorias:
+- NUNCA inventes datos: ni precios, ni horarios, ni direcciones, ni tratamientos, ni mutuas. Si algo no está en los datos de arriba, dilo con naturalidad ("eso te lo confirma el equipo de la clínica") y ofrece pasar la conversación a una persona.
+- Los huecos de agenda SIEMPRE salen de consultar_disponibilidad. Si no hay huecos, dilo y ofrece pasar con el equipo.
+- No des consejos médicos ni diagnósticos. Ante dolor fuerte, sangrado, golpes o una urgencia, ofrece la primera cita de urgencia disponible y, si no hay, usa escalar_a_humano.
+- Si el paciente pide hablar con una persona, se frustra, tiene una reclamación o el asunto se sale de tu ámbito, usa escalar_a_humano y dile con naturalidad que alguien del equipo seguirá la conversación.
+- Mensajes breves de WhatsApp. Listas cortas si ofreces varias opciones.
+- No reveles qué modelo o proveedor de IA usas; eres "el asistente virtual de ${clinicRec.name}".`;
+}
+
+function getSystemPrompt(clinicRec) {
+  return clinicRec.isDemo ? getDemoSystemPrompt() : getClinicSystemPrompt(clinicRec);
+}
+
+// La captación de leads de demo solo existe en el número comercial.
+const CLINIC_TOOLS = TOOLS.filter((t) => t.function.name !== 'registrar_lead_demo');
+
+async function handleIncomingMessage(clinicRec, phone, userText, contactName) {
+  clinic.getOrCreatePatient(clinicRec.id, phone, contactName);
+
+  if (clinicRec.isDemo) {
+    // Cualquier respuesta del lead lo mueve solo a GESTIONANDO en el CRM. El Org
+    // OS es idempotente (esto se dispara en cada mensaje entrante) y no avisa a
+    // nadie: el bot sigue trabajando la conversación por su cuenta.
+    notifyOrgOs('/api/leads/replied', { phone, preview: userText || '' }).catch((err) =>
+      console.error('Error notificando respuesta del lead al Org OS:', err)
+    );
+
+    // Replicar el mensaje entrante a la bandeja del Org OS. Si el numero está
+    // en modo CLOUD_API puro (sin coexistencia), Diego no puede leer las
+    // conversaciones desde la app WhatsApp Business; esto es lo que le permite
+    // verlas en /conversaciones. Fire-and-forget: si falla, la conversacion
+    // del bot con el paciente sigue igual.
+    notifyOrgOs('/api/leads/message-log', {
+      phone,
+      direction: 'INBOUND',
+      body: userText || '',
+      senderName: contactName || null,
+    }).catch((err) => console.error('Error registrando mensaje entrante en el Org OS:', err));
+  }
+
+  const { history, escalated } = await getHistory(clinicRec.id, phone);
 
   if (escalated) {
     // Conversación ya escalada: el bot no vuelve a intervenir automáticamente.
@@ -401,14 +466,15 @@ async function handleIncomingMessage(phone, userText, contactName) {
   }
 
   const messages = [...history, { role: 'user', content: userText }];
+  const tools = clinicRec.isDemo ? TOOLS : CLINIC_TOOLS;
   let escalatedNow = false;
   let finalText = '';
 
   for (let iteration = 0; iteration < 5; iteration++) {
     const response = await openai.chat.completions.create({
       model: MODEL,
-      messages: [{ role: 'system', content: getSystemPrompt() }, ...messages],
-      tools: TOOLS,
+      messages: [{ role: 'system', content: getSystemPrompt(clinicRec) }, ...messages],
+      tools,
     });
 
     const choice = response.choices[0].message;
@@ -422,7 +488,7 @@ async function handleIncomingMessage(phone, userText, contactName) {
     for (const call of toolCalls) {
       if (call.function.name === 'escalar_a_humano') escalatedNow = true;
       const input = call.function.arguments ? JSON.parse(call.function.arguments) : {};
-      const result = await executeTool(call.function.name, input, phone);
+      const result = await executeTool(call.function.name, input, phone, clinicRec);
       messages.push({
         role: 'tool',
         tool_call_id: call.id,
@@ -431,20 +497,22 @@ async function handleIncomingMessage(phone, userText, contactName) {
     }
   }
 
-  saveHistory(phone, trimHistory(messages), escalatedNow);
+  saveHistory(clinicRec.id, phone, trimHistory(messages), escalatedNow);
 
   const replyText = finalText || 'Perdona, ¿puedes repetírmelo? No he entendido bien tu mensaje.';
-  // Replicar la respuesta del bot al Org OS para que aparezca en la bandeja
-  // /conversaciones. Fire-and-forget: no bloquea el retorno al webhook de
-  // WhatsApp Cloud API, que ya está esperando la respuesta.
-  notifyOrgOs('/api/leads/message-log', {
-    phone,
-    direction: 'OUTBOUND',
-    body: replyText,
-    senderName: 'Bot',
-  }).catch((err) => console.error('Error registrando respuesta del bot en el Org OS:', err));
+  if (clinicRec.isDemo) {
+    // Replicar la respuesta del bot al Org OS para que aparezca en la bandeja
+    // /conversaciones. Fire-and-forget: no bloquea el retorno al webhook de
+    // WhatsApp Cloud API, que ya está esperando la respuesta.
+    notifyOrgOs('/api/leads/message-log', {
+      phone,
+      direction: 'OUTBOUND',
+      body: replyText,
+      senderName: 'Bot',
+    }).catch((err) => console.error('Error registrando respuesta del bot en el Org OS:', err));
+  }
 
   return replyText;
 }
 
-module.exports = { handleIncomingMessage, extractIncomingText, notifyLeadRepliedOnly, MODEL };
+module.exports = { handleIncomingMessage, extractIncomingText, notifyLeadRepliedOnly, MODEL, trimHistory };

@@ -1,5 +1,6 @@
 const db = require('../db/db');
 const whatsapp = require('./whatsapp');
+const clinics = require('./clinics');
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000; // cada 15 minutos
 
@@ -18,13 +19,14 @@ function formatSlotForReminder(slot) {
 function getPendingAppointments() {
   return db
     .prepare(
-      `SELECT a.id as appointment_id, a.reminder_48h_sent, a.reminder_24h_sent,
+      `SELECT a.id as appointment_id, a.clinic_id, a.reminder_48h_sent, a.reminder_24h_sent,
               p.phone, p.name as patient_name,
               s.date, s.time, s.treatment
        FROM appointments a
        JOIN patients p ON p.id = a.patient_id
        JOIN slots s ON s.id = a.slot_id
-       WHERE a.status = 'confirmada'
+       JOIN clinics c ON c.id = a.clinic_id
+       WHERE a.status = 'confirmada' AND c.status = 'activa'
          AND s.date >= date('now', '-1 day')
          AND (a.reminder_48h_sent = 0 OR a.reminder_24h_sent = 0)`
     )
@@ -46,17 +48,18 @@ async function checkAndSendReminders() {
   const appointments = getPendingAppointments();
 
   for (const appt of appointments) {
+    const clinic = clinics.getClinicById(appt.clinic_id);
     const apptTime = slotDateTime(appt).getTime();
     const hoursUntil = (apptTime - now) / (1000 * 60 * 60);
 
     try {
       if (!appt.reminder_48h_sent && hoursUntil <= 48 && hoursUntil > 24) {
-        const ok = await whatsapp.sendText(appt.phone, reminderMessage(appt, 48));
+        const ok = await whatsapp.sendText(appt.phone, reminderMessage(appt, 48), clinic);
         if (ok) markReminderSent(appt.appointment_id, 'reminder_48h_sent');
       }
 
       if (!appt.reminder_24h_sent && hoursUntil <= 24 && hoursUntil > 0) {
-        const ok = await whatsapp.sendText(appt.phone, reminderMessage(appt, 24));
+        const ok = await whatsapp.sendText(appt.phone, reminderMessage(appt, 24), clinic);
         if (ok) markReminderSent(appt.appointment_id, 'reminder_24h_sent');
       }
     } catch (err) {
