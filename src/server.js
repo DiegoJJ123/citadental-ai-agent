@@ -10,7 +10,7 @@ app.set('trust proxy', 1); // Render está detrás de un proxy; necesario para q
 app.use(express.json());
 app.use('/generated', express.static(require('path').join(__dirname, '..', 'public', 'generated')));
 
-app.get('/health', (req, res) => res.json({ ok: true }));
+app.get('/health', (req, res) => res.json({ ok: true, model: require('./services/agent').MODEL }));
 
 app.use('/', webhookRouter);
 app.use('/', dashboardRouter);

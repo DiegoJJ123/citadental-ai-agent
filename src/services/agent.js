@@ -8,7 +8,9 @@ const calendar = require('./calendar');
 const SALES_TEAM_PHONE = process.env.SALES_TEAM_PHONE;
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+// OPENAI_CHAT_MODEL (no OPENAI_MODEL): en Render quedó OPENAI_MODEL=gpt-4o y el
+// panel no dejaba editarla; con otro nombre el modelo barato se aplica sin tocarla.
+const MODEL = process.env.OPENAI_CHAT_MODEL || 'gpt-4.1-mini';
 
 const TOOLS = [
   {
@@ -445,4 +447,4 @@ async function handleIncomingMessage(phone, userText, contactName) {
   return replyText;
 }
 
-module.exports = { handleIncomingMessage, extractIncomingText, notifyLeadRepliedOnly };
+module.exports = { handleIncomingMessage, extractIncomingText, notifyLeadRepliedOnly, MODEL };
