@@ -38,11 +38,12 @@ function claimMessage(wamid) {
   return Number(r.changes) === 1;
 }
 
-// `channel`: proveedor por el que entró el mensaje ('meta' | 'ycloud'); la
-// respuesta sale por ese mismo canal.
-async function processIncoming({ clinic: clinicRec, from, message, contactName, context, channel, wamid }) {
+// `channel`: proveedor por el que entró el mensaje ('meta' | 'ycloud'). Solo
+// informativo: la respuesta sale SIEMPRE por el proveedor configurado en la
+// clínica. Al pasar un número a YCloud, Meta puede seguir entregando los
+// mensajes a nuestra app pero ya no le deja enviar con ese número.
+async function processIncoming({ clinic, from, message, contactName, context, channel, wamid }) {
   let replied = false;
-  const clinic = channel ? { ...clinicRec, whatsapp_provider: channel } : clinicRec;
   try {
     if (!clinics.isServing(clinic)) return; // clínica en onboarding o pausada: el bot no responde
     if (!claimMessage(wamid)) return; // ya atendido por la otra vía
