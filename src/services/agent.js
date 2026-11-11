@@ -8,7 +8,7 @@ const calendar = require('./calendar');
 const SALES_TEAM_PHONE = process.env.SALES_TEAM_PHONE;
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
+const MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 
 const TOOLS = [
   {
