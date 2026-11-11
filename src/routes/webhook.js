@@ -29,10 +29,23 @@ function logError(clinicId, phone, context, err) {
 // Lógica común a los dos proveedores. `from` = teléfono del paciente solo con
 // dígitos (como se guarda en la BD); `message` con la forma de WhatsApp
 // ({ id, type, text: { body }, button, interactive }).
-async function processIncoming({ clinic, from, message, contactName, context }) {
+// Un mismo mensaje puede llegar por Meta directo y por YCloud (durante la
+// migración de un número a YCloud, o si las dos suscripciones siguen vivas).
+// Se procesa solo la primera copia, identificada por el id de WhatsApp (wamid).
+function claimMessage(wamid) {
+  if (!wamid) return true;
+  const r = db.prepare('INSERT OR IGNORE INTO webhook_events (id) VALUES (?)').run(`msg:${wamid}`);
+  return Number(r.changes) === 1;
+}
+
+// `channel`: proveedor por el que entró el mensaje ('meta' | 'ycloud'); la
+// respuesta sale por ese mismo canal.
+async function processIncoming({ clinic: clinicRec, from, message, contactName, context, channel, wamid }) {
   let replied = false;
+  const clinic = channel ? { ...clinicRec, whatsapp_provider: channel } : clinicRec;
   try {
     if (!clinics.isServing(clinic)) return; // clínica en onboarding o pausada: el bot no responde
+    if (!claimMessage(wamid)) return; // ya atendido por la otra vía
 
     db.prepare('INSERT INTO message_log (clinic_id, phone) VALUES (?, ?)').run(clinic.id, from);
 
@@ -105,12 +118,15 @@ router.post('/webhook', async (req, res) => {
     logError(null, from, 'webhook', `Mensaje a un número sin clínica asignada (phone_number_id ${value?.metadata?.phone_number_id})`);
     return;
   }
-  // Una clínica que ya va por YCloud recibe sus mensajes por /webhook/ycloud.
-  // Si Meta nos sigue mandando copia (suscripción antigua), se ignora: así
-  // nunca se contesta dos veces al mismo mensaje.
-  if (clinic.whatsapp_provider === 'ycloud') return;
-
-  await processIncoming({ clinic, from, message, contactName: value.contacts?.[0]?.profile?.name, context: 'webhook' });
+  await processIncoming({
+    clinic,
+    from,
+    message,
+    contactName: value.contacts?.[0]?.profile?.name,
+    context: 'webhook',
+    channel: 'meta',
+    wamid: message.id,
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -153,12 +169,17 @@ router.post('/webhook/ycloud', async (req, res) => {
           logError(null, from, 'webhook:ycloud', `Mensaje a un número sin clínica asignada (${m.to})`);
           return;
         }
-        // Si la clínica aún responde por Meta directo, el mensaje ya lo atiende
-        // /webhook: contestar aquí también sería responder dos veces.
-        if (clinic.whatsapp_provider !== 'ycloud') return;
         // Mismo formato que Meta para reutilizar la lógica (id del mensaje de YCloud para "leído").
         const message = { ...m, id: m.id || m.wamid };
-        await processIncoming({ clinic, from, message, contactName: m.customerProfile?.name, context: 'webhook:ycloud' });
+        await processIncoming({
+          clinic,
+          from,
+          message,
+          contactName: m.customerProfile?.name,
+          context: 'webhook:ycloud',
+          channel: 'ycloud',
+          wamid: m.wamid,
+        });
         return;
       }
       case 'whatsapp.smb.message.echoes': {
