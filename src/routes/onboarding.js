@@ -621,7 +621,7 @@ router.get('/onboarding/demo/whatsapp', (req, res) => {
         </form>
         <h2>Panel de conversaciones (para enseñar a clínicas)</h2>
         <p class="hint">Enlace privado al panel de la demo, igual al que recibe la recepción de una clínica. Quien lo tenga ve los chats de la demo.</p>
-        ${demo.panel_token ? `<input type="text" readonly value="${esc(`${publicBaseUrl(req)}/panel/t/${demo.panel_token}`)}" onclick="this.select()">` : ''}
+        ${demo.panel_token ? `<input type="text" readonly value="${esc(`${publicBaseUrl(req)}/panel/${demo.panel_token}`)}" onclick="this.select()">` : ''}
         <form method="post" action="/onboarding/demo/panel-token"${demo.panel_token ? ` onsubmit="return confirm('El enlace actual dejará de funcionar. ¿Crear uno nuevo?')"` : ''}>
           <div class="actions" style="margin-top:10px"><a class="btn sec" href="/panel/c/${demo.id}" target="_blank">Ver conversaciones</a><button class="btn ${demo.panel_token ? 'sec' : ''}" type="submit">${demo.panel_token ? 'Crear enlace nuevo' : 'Crear enlace del panel'}</button></div>
         </form>`,
@@ -630,7 +630,7 @@ router.get('/onboarding/demo/whatsapp', (req, res) => {
 });
 
 router.post('/onboarding/demo/panel-token', (req, res) => {
-  clinics.updateClinic(clinics.getDemoClinic().id, { panel_token: require('./panel').newPanelToken() });
+  clinics.updateClinic(clinics.getDemoClinic().id, { panel_token: require('./panel').newPanelToken(clinics.getDemoClinic()) });
   res.redirect('/onboarding/demo/whatsapp?ok=' + encodeURIComponent('Enlace del panel creado.'));
 });
 
@@ -816,7 +816,7 @@ router.get('/onboarding/:id/activar', loadClinic, async (req, res) => {
         <p class="hint">Enlace privado para que la recepción vea las conversaciones del asistente, lo pause o reactive en un chat y responda desde la web. Quien tenga el enlace puede entrar: compártelo solo con la clínica.</p>
         ${
           clinic.panel_token
-            ? `<input type="text" readonly value="${esc(`${publicBaseUrl(req)}/panel/t/${clinic.panel_token}`)}" onclick="this.select()">
+            ? `<input type="text" readonly value="${esc(`${publicBaseUrl(req)}/panel/${clinic.panel_token}`)}" onclick="this.select()">
                <div class="actions" style="margin-top:10px"><a class="btn sec" href="/panel/c/${clinic.id}" target="_blank">Ver conversaciones</a>
                <form method="post" action="/onboarding/${clinic.id}/panel-token" onsubmit="return confirm('El enlace actual dejará de funcionar. ¿Crear uno nuevo?')"><button class="btn sec" type="submit">Crear enlace nuevo</button></form></div>`
             : `<div class="actions" style="margin-top:0"><a class="btn sec" href="/panel/c/${clinic.id}" target="_blank">Ver conversaciones</a>
@@ -829,7 +829,7 @@ router.get('/onboarding/:id/activar', loadClinic, async (req, res) => {
 });
 
 router.post('/onboarding/:id/panel-token', loadClinic, (req, res) => {
-  const clinic = clinics.updateClinic(req.clinic.id, { panel_token: require('./panel').newPanelToken() });
+  const clinic = clinics.updateClinic(req.clinic.id, { panel_token: require('./panel').newPanelToken(req.clinic) });
   go(res, clinic, 'activar', { ok: 'Enlace del panel creado. Cópialo y compártelo solo con la recepción de la clínica.' });
 });
 

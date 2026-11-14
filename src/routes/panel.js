@@ -18,8 +18,34 @@ function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
-function newPanelToken() {
-  return crypto.randomBytes(24).toString('hex');
+// Enlace de la recepción: "<nombre-de-la-clinica>-<clave>", p. ej.
+// "vitaldent-k7m2x9". La clave (6 caracteres sin ambigüedades: ~887 millones
+// de combinaciones) es lo que impide adivinar el enlace de otra clínica.
+const KEY_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz';
+const KEY_LEN = 6;
+const TOKEN_RE = /^[a-z0-9-]{1,40}-[2-9a-hjkmnp-z]{6}$/;
+const LEGACY_TOKEN_RE = /^[a-f0-9]{48}$/;
+
+function newPanelToken(clinic) {
+  const slug = clinics.slugify(clinic?.info?.nombre || clinic?.name || 'clinica').slice(0, 40).replace(/-+$/, '') || 'clinica';
+  const bytes = crypto.randomBytes(KEY_LEN);
+  const key = [...bytes].map((b) => KEY_ALPHABET[b % KEY_ALPHABET.length]).join('');
+  return `${slug}-${key}`;
+}
+
+// Freno a quien pruebe enlaces al azar: 20 fallos por IP cada 15 minutos.
+const failures = new Map();
+const FAIL_WINDOW_MS = 15 * 60 * 1000;
+const FAIL_MAX = 20;
+function tooManyFailures(ip) {
+  const f = failures.get(ip);
+  return Boolean(f) && Date.now() - f.since < FAIL_WINDOW_MS && f.count >= FAIL_MAX;
+}
+function recordFailure(ip) {
+  const f = failures.get(ip);
+  if (!f || Date.now() - f.since >= FAIL_WINDOW_MS) failures.set(ip, { since: Date.now(), count: 1 });
+  else f.count += 1;
+  if (failures.size > 5000) failures.clear();
 }
 
 function fmtTime(sqlite) {
@@ -84,15 +110,20 @@ function adminAccess(req, res, next) {
   next();
 }
 
-function tokenAccess(req, res, next) {
-  const token = String(req.params.token || '');
-  const clinic = /^[a-f0-9]{48}$/.test(token) ? db.prepare('SELECT id FROM clinics WHERE panel_token = ?').get(token) : null;
-  if (!clinic) return res.status(404).send('Enlace no válido o caducado. Pide uno nuevo a CitaDental AI.');
+// prefix: '/panel' (enlace nuevo) o '/panel/t' (enlaces antiguos de 48 cifras).
+const tokenAccess = (prefix, re) => (req, res, next) => {
+  const token = String(req.params.token || '').toLowerCase();
+  if (tooManyFailures(req.ip)) return res.status(429).send('Demasiados intentos. Espera unos minutos.');
+  const clinic = re.test(token) ? db.prepare('SELECT id FROM clinics WHERE panel_token = ?').get(token) : null;
+  if (!clinic) {
+    recordFailure(req.ip);
+    return res.status(404).send('Enlace no válido o caducado. Pide uno nuevo a CitaDental AI.');
+  }
   req.clinic = clinics.getClinicById(clinic.id);
-  req.base = `/panel/t/${token}`;
+  req.base = `${prefix}/${token}`;
   req.isAdmin = false;
   next();
-}
+};
 
 const flashFrom = (q) => (q.ok ? { ok: q.ok } : q.error ? { error: q.error } : null);
 const validPhone = (p) => /^\d{6,20}$/.test(String(p || ''));
@@ -228,7 +259,8 @@ function mount(prefix, access) {
 
 router.use('/panel/c', auth.requireDashboardAuth);
 mount('/panel/c/:clinicId', adminAccess);
-mount('/panel/t/:token', tokenAccess);
+mount('/panel/t/:token', tokenAccess('/panel/t', LEGACY_TOKEN_RE)); // enlaces antiguos
+mount('/panel/:token', tokenAccess('/panel', TOKEN_RE));
 
 module.exports = router;
 module.exports.newPanelToken = newPanelToken;
