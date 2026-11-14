@@ -6,6 +6,7 @@ const express = require('express');
 const auth = require('../services/auth');
 const db = require('../db/db');
 const clinics = require('../services/clinics');
+const brand = require('../services/brand');
 const agenda = require('../services/agenda');
 const calendar = require('../services/calendar');
 const gcal = require('../services/googleCalendar');
@@ -50,51 +51,49 @@ function esc(v) {
   return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
-const CSS = `
-*{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f6f7fb;color:#1f2937;line-height:1.5}
-a{color:#2563eb} header{background:#0f172a;color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
-header a{color:#cbd5e1;text-decoration:none;margin-left:16px;font-size:14px} header strong{font-size:17px}
-.wrap{max-width:1100px;margin:0 auto;padding:24px;display:grid;grid-template-columns:240px 1fr;gap:24px}
+const CSS = brand.CSS + `
+.wrap{max-width:1160px;margin:0 auto;padding:28px 24px;display:grid;grid-template-columns:250px 1fr;gap:24px}
 .wrap.single{grid-template-columns:1fr}
-@media (max-width:820px){.wrap{grid-template-columns:1fr}}
-nav.steps{background:#fff;border-radius:12px;padding:12px;height:fit-content;border:1px solid #e5e7eb}
-nav.steps a{display:flex;gap:10px;align-items:center;padding:9px 10px;border-radius:8px;color:#374151;text-decoration:none;font-size:14px}
-nav.steps a.cur{background:#eef2ff;color:#3730a3;font-weight:600} nav.steps a:hover{background:#f3f4f6}
-nav.steps .n{width:24px;height:24px;border-radius:50%;background:#e5e7eb;display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex:none}
-nav.steps a.done .n{background:#16a34a;color:#fff} nav.steps a.cur .n{background:#4f46e5;color:#fff}
-main.card{background:#fff;border-radius:12px;padding:28px;border:1px solid #e5e7eb}
-h1{font-size:22px;margin:0 0 6px} h2{font-size:17px;margin:24px 0 8px} p.sub{color:#6b7280;margin:0 0 20px}
-label{display:block;font-weight:600;font-size:14px;margin:14px 0 6px} .hint{font-weight:400;color:#6b7280;font-size:13px}
-input[type=text],input[type=url],input[type=email],input[type=tel],input[type=password],input[type=number],input[type=time],textarea,select{width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font:inherit;background:#fff}
-textarea{min-height:80px;resize:vertical} input[type=time]{width:auto;min-width:118px;display:inline-block} td.range{white-space:nowrap} input:focus,textarea:focus{outline:2px solid #c7d2fe;border-color:#6366f1}
-.btn{display:inline-block;background:#4f46e5;color:#fff;border:0;border-radius:8px;padding:11px 18px;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
-.btn:hover{background:#4338ca} .btn.sec{background:#fff;color:#374151;border:1px solid #d1d5db} .btn.sec:hover{background:#f9fafb}
-.btn.green{background:#16a34a} .btn.red{background:#dc2626} .btn[disabled]{opacity:.6;cursor:wait}
+@media (max-width:820px){.wrap{grid-template-columns:1fr;padding:16px}}
+nav.steps{background:#fff;border-radius:var(--radius);padding:14px;height:fit-content;border:1px solid var(--border);box-shadow:var(--shadow-soft);position:sticky;top:84px}
+nav.steps .clinic{padding:6px 10px 14px;font-family:"Plus Jakarta Sans",sans-serif;font-weight:700;border-bottom:1px solid var(--border);margin-bottom:8px}
+nav.steps a{display:flex;gap:10px;align-items:center;padding:9px 10px;border-radius:12px;color:var(--text-muted);text-decoration:none;font-size:14px;font-weight:500}
+nav.steps a.cur{background:var(--brand-soft);color:var(--brand-deep);font-weight:600} nav.steps a:hover{background:var(--surface);color:var(--brand-deep)}
+nav.steps .n{width:26px;height:26px;border-radius:50%;background:var(--surface);border:1px solid var(--border);display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex:none}
+nav.steps a.done .n{background:var(--whatsapp);border-color:var(--whatsapp);color:#fff}
+nav.steps a.cur .n{background:linear-gradient(135deg,var(--brand-deep),var(--brand-light));border-color:transparent;color:#fff}
+main.card{background:#fff;border-radius:var(--radius);padding:32px;border:1px solid var(--border);box-shadow:var(--shadow-soft);min-width:0}
+@media (max-width:640px){main.card{padding:20px}}
+h1{font-size:26px;font-weight:800;margin:0 0 6px} h2{font-size:18px;font-weight:700;margin:28px 0 8px} p.sub{color:var(--text-muted);margin:0 0 22px}
+label{display:block;font-weight:600;font-size:14px;margin:14px 0 6px} .hint{font-weight:400;color:var(--text-muted);font-size:13px}
+input[type=text],input[type=url],input[type=email],input[type=tel],input[type=password],input[type=number],input[type=time],textarea,select{width:100%;padding:11px 14px;border:1px solid var(--border);border-radius:12px;font:inherit;background:#fff;color:var(--text-strong)}
+textarea{min-height:80px;resize:vertical} input[type=time]{width:auto;min-width:118px;display:inline-block} td.range{white-space:nowrap}
+input:focus,textarea:focus,select:focus{outline:3px solid #D3E2FA;border-color:var(--brand-mid)}
 .actions{display:flex;gap:10px;justify-content:space-between;align-items:center;margin-top:26px;flex-wrap:wrap}
-.ok{background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;padding:10px 14px;border-radius:8px;margin-bottom:16px}
-.err{background:#fef2f2;color:#991b1b;border:1px solid #fecaca;padding:10px 14px;border-radius:8px;margin-bottom:16px}
-.info{background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe;padding:10px 14px;border-radius:8px;margin-bottom:16px}
-table{width:100%;border-collapse:collapse;font-size:14px} th,td{text-align:left;padding:8px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
-th{color:#6b7280;font-weight:600;font-size:12px;text-transform:uppercase}
-.badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600}
-.b-onboarding{background:#fef3c7;color:#92400e} .b-activa{background:#dcfce7;color:#166534} .b-pausada{background:#e5e7eb;color:#374151}
+table{width:100%;border-collapse:collapse;font-size:14px} th,td{text-align:left;padding:12px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+tbody tr:hover td{background:#FAFBFD}
+th{color:var(--text-muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.badge{display:inline-block;padding:3px 11px;border-radius:999px;font-size:12px;font-weight:600}
+.b-onboarding{background:var(--alert-soft);color:#A34E12} .b-activa{background:#EAF7EF;color:#17633A} .b-pausada{background:var(--surface);color:var(--text-muted);border:1px solid var(--border)}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px} @media (max-width:640px){.grid2{grid-template-columns:1fr}}
-.provider{border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;margin:8px 0;display:flex;gap:12px;align-items:flex-start;cursor:pointer}
-.provider input{margin-top:4px} .provider.dis{opacity:.55;cursor:not-allowed}
-.check{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid #f1f5f9}
+.provider{border:1px solid var(--border);border-radius:14px;padding:13px 15px;margin:8px 0;display:flex;gap:12px;align-items:flex-start;cursor:pointer;font-weight:400;transition:border-color .15s,background .15s}
+.provider:hover{border-color:var(--brand-light)} .provider:has(input:checked){border-color:var(--brand-mid);background:var(--brand-soft)}
+.provider input{margin-top:4px;accent-color:var(--brand-deep)} .provider.dis{opacity:.55;cursor:not-allowed}
+.check{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)}
 .check .i{flex:none;width:22px;text-align:center}
-ol.guide li{margin:6px 0}
-#chat{border:1px solid #e5e7eb;border-radius:12px;background:#efeae2;height:430px;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px}
-.msg{max-width:78%;padding:8px 12px;border-radius:10px;white-space:pre-wrap;font-size:14px;box-shadow:0 1px 1px rgba(0,0,0,.06)}
-.msg.me{align-self:flex-end;background:#d9fdd3} .msg.bot{align-self:flex-start;background:#fff} .msg.sys{align-self:center;background:#fff7cd;font-size:12px}
+ol.guide{padding-left:22px} ol.guide li{margin:8px 0} ol.guide li::marker{color:var(--brand-mid);font-weight:700}
+#chat{border:1px solid var(--border);border-radius:var(--radius);background:#EFEAE2;height:430px;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px}
+.msg{max-width:78%;padding:8px 12px;border-radius:12px;white-space:pre-wrap;font-size:14px;box-shadow:0 1px 1px rgba(0,0,0,.06)}
+.msg.me{align-self:flex-end;background:#D9FDD3} .msg.bot{align-self:flex-start;background:#fff} .msg.sys{align-self:center;background:#FFF7CD;font-size:12px}
 .chatbar{display:flex;gap:8px;margin-top:10px} .chatbar input{flex:1}
-small.mono{font-family:ui-monospace,monospace;color:#6b7280}
+small.mono{font-family:ui-monospace,monospace;color:var(--text-muted)}
+.hello{display:flex;align-items:center;gap:18px;margin-bottom:8px} .hello img{width:84px;height:auto;filter:drop-shadow(0 12px 20px rgba(31,78,168,.25))}
 `;
 
 function page(req, { title, clinic, step, body }) {
   const nav = clinic
     ? `<nav class="steps">
-        <div style="padding:6px 10px 12px;font-weight:700">${esc(clinic.name)}<br><span class="badge b-${esc(clinic.status)}">${esc(clinic.status)}</span></div>
+        <div class="clinic">${esc(clinic.name)}<br><span class="badge b-${esc(clinic.status)}">${esc(clinic.status)}</span></div>
         ${STEPS.map((s, i) => {
           const done = stepDone(clinic, s.key);
           return `<a href="/onboarding/${clinic.id}/${s.key}" class="${s.key === step ? 'cur' : ''} ${done ? 'done' : ''}"><span class="n">${done ? '✓' : i + 1}</span>${esc(s.title)}</a>`;
@@ -107,9 +106,9 @@ function page(req, { title, clinic, step, body }) {
     req.query.error ? `<div class="err">${esc(req.query.error)}</div>` : '',
   ].join('');
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex"><title>${esc(title)} · CitaDental AI</title><style>${CSS}</style></head><body>
-<header><strong>🦷 CitaDental AI · Alta de clínicas</strong><div><span style="font-size:13px;color:#94a3b8">${esc(req.dashboardEmail || '')}</span><a href="/onboarding">Clínicas</a><a href="/dashboard">Panel demo</a><a href="/dashboard/logout">Cerrar sesión</a></div></header>
-<div class="wrap ${clinic ? '' : 'single'}">${nav}<main class="card">${flash}${body}</main></div>
+<meta name="robots" content="noindex"><title>${esc(title)} · CitaDental AI</title>${brand.HEAD}<style>${CSS}</style></head><body>${brand.BG}
+<header class="topbar"><a href="/onboarding" class="logo-link" style="text-decoration:none">${brand.logo('Alta de clínicas')}</a><nav><span class="who">${esc(req.dashboardEmail || '')}</span><a href="/onboarding">Clínicas</a><a href="/panel/c/1">Conversaciones demo</a><a href="/dashboard">Panel demo</a><a href="/dashboard/logout">Cerrar sesión</a></nav></header>
+<div class="wrap ${clinic ? '' : 'single'}">${nav}<main class="card">${flash}${body}</main></div>${brand.FOOTER}
 <script>document.querySelectorAll('form[data-busy]').forEach(f=>f.addEventListener('submit',()=>{const b=f.querySelector('button[type=submit]');if(b){b.disabled=true;b.textContent=f.dataset.busy;}}));</script>
 </body></html>`;
 }
@@ -188,9 +187,9 @@ router.get('/onboarding', (req, res) => {
   res.send(
     page(req, {
       title: 'Clínicas',
-      body: `<div class="actions" style="margin-top:0"><div><h1>Clínicas</h1><p class="sub">Da de alta una clínica nueva o continúa un alta a medias.</p></div>
+      body: `<div class="actions" style="margin-top:0"><div class="hello"><img src="${brand.MASCOT_URL}" alt="" class="float"><div><span class="eyebrow"><i></i>Panel de CitaDental AI</span><h1 style="margin-top:8px">Tus <span class="text-gradient">clínicas</span></h1><p class="sub" style="margin:0">${list.length ? `${list.length} clínica${list.length === 1 ? '' : 's'} · ${list.filter((c) => c.status === 'activa').length} activa${list.filter((c) => c.status === 'activa').length === 1 ? '' : 's'}. Da de alta una nueva o continúa un alta a medias.` : 'Da de alta tu primera clínica.'}</p></div></div>
         <span><a class="btn sec" href="/panel/c/1">Conversaciones demo</a> <a class="btn sec" href="/onboarding/demo/whatsapp">WhatsApp de la demo</a> <a class="btn" href="/onboarding/nueva">+ Nueva clínica</a></span></div>
-        ${list.length ? `<table><thead><tr><th>Clínica</th><th>Estado</th><th>WhatsApp</th><th>Mensajes este mes</th><th>Progreso</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="info">Todavía no hay clínicas. Pulsa «Nueva clínica» para empezar.</div>'}`,
+        ${list.length ? `<div style="overflow-x:auto;margin-top:18px"><table><thead><tr><th>Clínica</th><th>Estado</th><th>WhatsApp</th><th>Mensajes este mes</th><th>Progreso</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div style="padding:30px 0">${brand.mascot('Todavía no hay clínicas. Pulsa <b>«+ Nueva clínica»</b> y te guío paso a paso.', { size: 120 })}</div>`}`,
     })
   );
 });

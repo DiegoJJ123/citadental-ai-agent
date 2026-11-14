@@ -8,6 +8,7 @@ const auth = require('../services/auth');
 const db = require('../db/db');
 const clinics = require('../services/clinics');
 const messages = require('../services/messages');
+const brand = require('../services/brand');
 const { DEFAULT_TZ } = require('../services/tz');
 
 const router = express.Router();
@@ -31,41 +32,46 @@ function fmtTime(sqlite) {
     : d.toLocaleString('es-ES', { timeZone: DEFAULT_TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
-const CSS = `
-*{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f0f2f5;color:#111b21}
-header{background:#0f172a;color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
-header a{color:#cbd5e1;text-decoration:none;font-size:14px;margin-left:14px} header strong{font-size:16px}
-.wrap{max-width:1000px;margin:0 auto;padding:16px}
-.card{background:#fff;border-radius:12px;border:1px solid #e5e7eb;overflow:hidden}
-.chat-row{display:flex;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid #f0f2f5;text-decoration:none;color:inherit}
-.chat-row:hover{background:#f5f6f6}
-.avatar{width:42px;height:42px;border-radius:50%;background:#dfe5e7;display:flex;align-items:center;justify-content:center;font-weight:700;color:#54656f;flex:none}
-.grow{flex:1;min-width:0} .name{font-weight:600} .snippet{color:#667781;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.meta{text-align:right;font-size:12px;color:#667781;flex:none}
-.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;margin-top:4px}
-.p-bot{background:#dcfce7;color:#166534} .p-off{background:#fee2e2;color:#991b1b}
-.empty{padding:30px;text-align:center;color:#667781}
-.chat-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid #e5e7eb;flex-wrap:wrap}
-#msgs{height:60vh;overflow-y:auto;padding:16px;background:#efeae2;display:flex;flex-direction:column;gap:6px}
-.m{max-width:75%;padding:7px 10px;border-radius:8px;font-size:14px;white-space:pre-wrap;box-shadow:0 1px 1px rgba(0,0,0,.06);word-wrap:break-word}
+const CSS = brand.CSS + `
+.wrap{max-width:1040px;margin:0 auto;padding:28px 20px}
+@media (max-width:640px){.wrap{padding:14px 10px}}
+.hero{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:20px;flex-wrap:wrap}
+.hero h1{font-size:30px;font-weight:800;margin:8px 0 4px;line-height:1.1} .hero p{margin:0;color:var(--text-muted)}
+.hero .hello{display:flex;align-items:center;gap:16px} .hero img{width:78px;height:auto;filter:drop-shadow(0 12px 20px rgba(31,78,168,.25))}
+.stats{display:flex;gap:10px;flex-wrap:wrap}
+.stat{background:#fff;border:1px solid var(--border);border-radius:14px;padding:10px 16px;box-shadow:var(--shadow-soft);min-width:110px}
+.stat b{display:block;font-family:"Plus Jakarta Sans",sans-serif;font-size:22px;color:var(--brand-deep);line-height:1.2} .stat span{font-size:12px;color:var(--text-muted)}
+.card{background:#fff;border-radius:var(--radius);border:1px solid var(--border);overflow:hidden;box-shadow:var(--shadow-soft)}
+.chat-row{display:flex;gap:14px;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border);text-decoration:none;color:inherit;transition:background .12s}
+.chat-row:last-child{border-bottom:0} .chat-row:hover{background:var(--brand-soft)}
+.avatar{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,var(--brand-deep),var(--brand-light));display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;flex:none;font-family:"Plus Jakarta Sans",sans-serif}
+.grow{flex:1;min-width:0} .name{font-weight:600;color:var(--text-strong)} .snippet{color:var(--text-muted);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meta{text-align:right;font-size:12px;color:var(--text-muted);flex:none}
+.pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;margin-top:4px}
+.p-bot{background:#EAF7EF;color:#17633A} .p-off{background:var(--alert-soft);color:#A34E12}
+.empty{padding:44px 20px}
+.chat-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap;background:#fff}
+.chat-head .who{display:flex;align-items:center;gap:12px} .chat-head .back{text-decoration:none;font-size:20px;color:var(--brand-deep);padding:0 4px}
+#msgs{height:60vh;overflow-y:auto;padding:18px;background:#EFEAE2;display:flex;flex-direction:column;gap:6px}
+.m{max-width:75%;padding:8px 12px;border-radius:12px;font-size:14px;white-space:pre-wrap;box-shadow:0 1px 1px rgba(0,0,0,.06);word-wrap:break-word;color:#111B21}
 .m small{display:block;font-size:11px;color:#667781;margin-top:3px;text-align:right}
-.in{align-self:flex-start;background:#fff} .bot{align-self:flex-end;background:#d9fdd3} .human{align-self:flex-end;background:#cfe9ff}
-.system{align-self:center;background:#fff7cd;font-size:12px}
-.btn{display:inline-block;border:0;border-radius:8px;padding:9px 14px;font:inherit;font-weight:600;cursor:pointer;text-decoration:none}
-.b-red{background:#dc2626;color:#fff} .b-green{background:#16a34a;color:#fff} .b-blue{background:#2563eb;color:#fff} .b-sec{background:#fff;color:#374151;border:1px solid #d1d5db}
-form.send{display:flex;gap:8px;padding:12px;border-top:1px solid #e5e7eb;background:#f0f2f5}
-form.send textarea{flex:1;border:1px solid #d1d5db;border-radius:8px;padding:9px;font:inherit;resize:none;height:44px}
-.note{padding:10px 16px;font-size:13px;color:#667781;background:#fff}
-.flash{padding:10px 14px;border-radius:8px;margin-bottom:12px} .f-ok{background:#ecfdf5;color:#065f46} .f-err{background:#fef2f2;color:#991b1b}
-.legend{font-size:12px;color:#667781;margin:8px 0}
+.in{align-self:flex-start;background:#fff;border-top-left-radius:4px} .bot{align-self:flex-end;background:#DCE9FD;border-top-right-radius:4px} .human{align-self:flex-end;background:#D9FDD3;border-top-right-radius:4px}
+.system{align-self:center;background:#FFF7CD;font-size:12px;border-radius:999px;padding:4px 12px}
+form.send{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border);background:var(--surface);align-items:center}
+form.send textarea{flex:1;border:1px solid var(--border);border-radius:22px;padding:11px 16px;font:inherit;resize:none;height:46px;background:#fff}
+form.send textarea:focus{outline:3px solid #D3E2FA;border-color:var(--brand-mid)}
+.note{padding:12px 18px;font-size:13px;color:#8A4210;background:var(--alert-soft)}
+.flash{padding:11px 16px;border-radius:12px;margin-bottom:14px} .f-ok{background:#EAF7EF;color:#17633A;border:1px solid #BFE6CE} .f-err{background:#FDECEC;color:#8E1F1F;border:1px solid #F6C9C9}
+.legend{font-size:13px;color:var(--text-muted);margin:0 0 10px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+.legend .dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
 `;
 
 function layout({ title, clinic, base, isAdmin, body, flash }) {
   const flashHtml = flash?.ok ? `<div class="flash f-ok">${esc(flash.ok)}</div>` : flash?.error ? `<div class="flash f-err">${esc(flash.error)}</div>` : '';
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex"><title>${esc(title)} · ${esc(clinic.name)}</title><style>${CSS}</style></head><body>
-<header><strong>💬 ${esc(clinic.name)} · Conversaciones</strong><div><a href="${base}">Chats</a>${isAdmin ? `<a href="/onboarding">Clínicas</a><a href="/dashboard/logout">Cerrar sesión</a>` : ''}</div></header>
-<div class="wrap">${flashHtml}${body}</div></body></html>`;
+<meta name="robots" content="noindex"><title>${esc(title)} · ${esc(clinic.name)}</title>${brand.HEAD}<style>${CSS}</style></head><body>${brand.BG}
+<header class="topbar"><a href="${base}" style="text-decoration:none">${brand.logo(esc(clinic.name))}</a><nav><a href="${base}">Chats</a>${isAdmin ? `<a href="/onboarding">Clínicas</a><a href="/dashboard/logout">Cerrar sesión</a>` : ''}</nav></header>
+<div class="wrap">${flashHtml}${body}</div>${brand.FOOTER}</body></html>`;
 }
 
 // Resuelve la clínica y la base de URLs según el tipo de acceso.
@@ -91,6 +97,13 @@ function tokenAccess(req, res, next) {
 const flashFrom = (q) => (q.ok ? { ok: q.ok } : q.error ? { error: q.error } : null);
 const validPhone = (p) => /^\d{6,20}$/.test(String(p || ''));
 
+// Iniciales del paciente; si no sabemos su nombre, un icono de persona.
+const PERSON_ICON = '<svg width="22" height="22" viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-6 8-6s8 2 8 6z"/></svg>';
+function avatar(name) {
+  const initials = String(name || '').split(/\s+/).map((w) => w.replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ]/g, '')[0] || '').join('').slice(0, 2).toUpperCase();
+  return `<div class="avatar">${initials ? esc(initials) : PERSON_ICON}</div>`;
+}
+
 function chatList(req, res) {
   const { clinic, base } = req;
   const chats = messages.listChats(clinic.id);
@@ -99,7 +112,7 @@ function chatList(req, res) {
       const label = c.patient_name || `+${c.phone}`;
       const who = c.last_author === 'patient' ? '' : c.last_author === 'bot' ? '🤖 ' : c.last_author === 'human' ? '👤 ' : '';
       return `<a class="chat-row" href="${base}/chat/${esc(c.phone)}">
-        <div class="avatar">${esc(label.replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ0-9]/g, '').slice(0, 2).toUpperCase() || '?')}</div>
+        ${avatar(c.patient_name)}
         <div class="grow"><div class="name">${esc(label)}</div><div class="snippet">${esc(who + (c.last_body || ''))}</div></div>
         <div class="meta">${esc(fmtTime(c.last_at))}<br><span class="pill ${c.paused ? 'p-off' : 'p-bot'}">${c.paused ? 'Asistente pausado' : 'Asistente activo'}</span></div>
       </a>`;
@@ -112,8 +125,13 @@ function chatList(req, res) {
       base,
       isAdmin: req.isAdmin,
       flash: flashFrom(req.query),
-      body: `<div class="legend">🤖 respondió el asistente · 👤 respondió una persona. Se actualiza solo cada 20 segundos.</div>
-        <div class="card">${rows || '<div class="empty">Todavía no hay conversaciones.</div>'}</div>
+      body: `<div class="hero"><div class="hello"><img src="${brand.MASCOT_URL}" alt="" class="float"><div>
+          <span class="eyebrow live"><i></i>Asistente atendiendo · se actualiza solo</span>
+          <h1>Conversaciones de <span class="text-gradient">${esc(clinic.info?.nombre || clinic.name)}</span></h1>
+          <p>Lo que hablan tus pacientes con el asistente. Entra en un chat para pausarlo o responder tú.</p></div></div>
+          <div class="stats"><div class="stat"><b>${chats.length}</b><span>chats</span></div><div class="stat"><b>${chats.filter((c) => c.paused).length}</b><span>con el asistente pausado</span></div></div></div>
+        <div class="legend"><span><i class="dot" style="background:#fff;border:1px solid #ccc"></i>Paciente</span><span><i class="dot" style="background:#DCE9FD"></i>🤖 Asistente</span><span><i class="dot" style="background:#D9FDD3"></i>👤 Recepción</span></div>
+        <div class="card">${rows || `<div class="empty">${brand.mascot('Todavía no hay conversaciones. En cuanto un paciente escriba al WhatsApp de la clínica, aparecerá aquí.', { size: 110 })}</div>`}</div>
         <script>setTimeout(()=>location.reload(),20000)</script>`,
     })
   );
@@ -144,10 +162,10 @@ function chatView(req, res) {
       flash: flashFrom(req.query),
       body: `<div class="card">
         <div class="chat-head">
-          <div><a href="${base}" style="text-decoration:none">←</a> <strong>${esc(label)}</strong>
-            <span class="pill ${chat.paused ? 'p-off' : 'p-bot'}">${chat.paused ? 'Asistente pausado' : 'Asistente activo'}</span></div>
+          <div class="who"><a class="back" href="${base}" title="Volver a los chats">←</a>${avatar(chat.name)}<div><strong>${esc(label)}</strong><br>
+            <span class="pill ${chat.paused ? 'p-off' : 'p-bot'}">${chat.paused ? 'Asistente pausado: responde la recepción' : 'Asistente activo'}</span></div></div>
           <form method="post" action="${base}/chat/${esc(phone)}/${chat.paused ? 'reactivar' : 'pausar'}">
-            <button class="btn ${chat.paused ? 'b-green' : 'b-red'}" type="submit">${chat.paused ? 'Reactivar asistente' : 'Pausar asistente'}</button>
+            <button class="btn ${chat.paused ? 'green' : 'red'}" type="submit">${chat.paused ? 'Reactivar asistente' : 'Pausar asistente'}</button>
           </form>
         </div>
         <div id="msgs">${renderMessages(chat.messages) || '<div class="m system">Sin mensajes</div>'}</div>
@@ -155,7 +173,7 @@ function chatView(req, res) {
           chat.canWrite
             ? `<form class="send" method="post" action="${base}/chat/${esc(phone)}/enviar">
                  <textarea name="text" placeholder="Escribe una respuesta… (al enviar, el asistente se pausa en este chat)" required></textarea>
-                 <button class="btn b-blue" type="submit">Enviar</button></form>`
+                 <button class="btn" type="submit">Enviar</button></form>`
             : '<div class="note">No se puede escribir: han pasado más de 24 h desde el último mensaje del paciente (norma de WhatsApp). Podrás responder cuando vuelva a escribir.</div>'
         }
       </div>
