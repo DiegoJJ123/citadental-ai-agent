@@ -766,6 +766,7 @@ router.get('/onboarding/:id/activar', loadClinic, async (req, res) => {
     }
   }
   const pendingTests = db.prepare("SELECT COUNT(*) n FROM appointments WHERE clinic_id = ? AND is_test = 1 AND status = 'confirmada'").get(clinic.id).n;
+  const inboundOk = realMessageReceived(clinic);
   const checks = [
     { ok: stepDone(clinic, 'datos'), label: 'Datos de la clínica (dirección y horario)', step: 'datos', required: true },
     { ok: stepDone(clinic, 'agenda'), label: 'Agenda y tratamientos configurados', step: 'agenda', required: true },
@@ -779,13 +780,22 @@ router.get('/onboarding/:id/activar', loadClinic, async (req, res) => {
       step: 'whatsapp',
       required: false,
     },
+    {
+      ok: inboundOk,
+      label: inboundOk
+        ? 'Mensaje real recibido por WhatsApp (el número recibe bien los mensajes)'
+        : `Falta comprobar que el número recibe mensajes: desde tu móvil escribe «hola» a ${clinic.whatsapp_display_phone || 'el número de la clínica'} y pulsa «Comprobar». Si no aparece en 1 minuto, el número no está recibiendo mensajes (revisa YCloud).`,
+      step: 'activar',
+      linkText: 'Comprobar',
+      required: true,
+    },
     { ok: stepDone(clinic, 'recepcion'), label: 'Avisos a recepción', step: 'recepcion', required: true },
     { ok: stepDone(clinic, 'prueba'), label: 'Asistente probado', step: 'prueba', required: false },
     { ok: pendingTests === 0, label: pendingTests ? `Quedan ${pendingTests} cita(s) de prueba en el calendario (reinicia la prueba para borrarlas)` : 'Sin citas de prueba pendientes', step: 'prueba', required: false },
   ];
   const ready = checks.filter((c) => c.required).every((c) => c.ok);
   const list = checks
-    .map((c) => `<div class="check"><span class="i">${c.ok ? '✅' : c.required ? '❌' : '⚠️'}</span><span style="flex:1">${esc(c.label)}</span>${c.ok ? '' : `<a href="/onboarding/${clinic.id}/${c.step}">Ir</a>`}</div>`)
+    .map((c) => `<div class="check"><span class="i">${c.ok ? '✅' : c.required ? '❌' : '⚠️'}</span><span style="flex:1">${esc(c.label)}</span>${c.ok ? '' : `<a href="/onboarding/${clinic.id}/${c.step}">${c.linkText || 'Ir'}</a>`}</div>`)
     .join('');
   const statusBox =
     clinic.status === 'activa'
@@ -828,6 +838,15 @@ router.get('/onboarding/:id/activar', loadClinic, async (req, res) => {
   );
 });
 
+// ¿Ha llegado algún mensaje real (no del chat de prueba) al número de la
+// clínica? Prueba de que Meta → YCloud → bot entrega los mensajes: un número
+// puede salir «Connected» y aun así no recibir nada.
+function realMessageReceived(clinic) {
+  return Boolean(
+    db.prepare("SELECT 1 FROM messages WHERE clinic_id = ? AND direction = 'in' AND phone NOT LIKE 'prueba-%' LIMIT 1").get(clinic.id)
+  );
+}
+
 router.post('/onboarding/:id/panel-token', loadClinic, (req, res) => {
   const clinic = clinics.updateClinic(req.clinic.id, { panel_token: require('./panel').newPanelToken(req.clinic) });
   go(res, clinic, 'activar', { ok: 'Enlace del panel creado. Cópialo y compártelo solo con la recepción de la clínica.' });
@@ -842,7 +861,7 @@ router.post('/onboarding/:id/eliminar', loadClinic, async (req, res) => {
     console.error('Error cancelando citas de prueba al eliminar:', err);
   }
   db.transaction(() => {
-    for (const t of ['appointments', 'slots', 'conversations', 'patients', 'message_log', 'error_log', 'demo_leads']) {
+    for (const t of ['appointments', 'slots', 'conversations', 'patients', 'message_log', 'error_log', 'demo_leads', 'messages']) {
       db.prepare(`DELETE FROM ${t} WHERE clinic_id = ?`).run(clinic.id);
     }
     db.prepare('DELETE FROM clinics WHERE id = ? AND mode = ?').run(clinic.id, 'clinica');
@@ -856,6 +875,9 @@ router.post('/onboarding/:id/estado', loadClinic, form, async (req, res) => {
     const c = req.clinic;
     if (!(stepDone(c, 'datos') && stepDone(c, 'agenda') && c.google_refresh_token && stepDone(c, 'whatsapp') && stepDone(c, 'recepcion'))) {
       return go(res, c, 'activar', { error: 'Faltan pasos obligatorios.' });
+    }
+    if (!realMessageReceived(c)) {
+      return go(res, c, 'activar', { error: 'Antes de activar, escribe un mensaje al número de la clínica desde tu móvil y comprueba que llega.' });
     }
     try {
       await gcal.ping(c);
