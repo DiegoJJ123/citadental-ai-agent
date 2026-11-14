@@ -181,7 +181,8 @@ router.get('/onboarding', (req, res) => {
         <td>${esc(c.whatsapp_display_phone || '—')}</td>
         <td>${monthCount.get(c.id).n}</td>
         <td>${pending ? `Pendiente: ${esc(pending.title)}` : !realMessageReceived(c) ? '<span style="color:#A34E12;font-weight:600">⚠️ No ha llegado ningún mensaje al número</span>' : '✓ Completo'}</td>
-        <td style="text-align:right;white-space:nowrap"><a class="btn sec" href="/panel/c/${c.id}">Conversaciones</a> <a class="btn sec" href="/onboarding/${c.id}/${pending ? pending.key : 'activar'}">${c.status === 'activa' ? 'Gestionar' : 'Continuar'}</a></td>
+        <td style="text-align:right;white-space:nowrap"><a class="btn sec" href="/panel/c/${c.id}">Conversaciones</a> <a class="btn sec" href="/onboarding/${c.id}/${pending ? pending.key : 'activar'}">${c.status === 'activa' ? 'Gestionar' : 'Continuar'}</a>
+          ${deleteForm(c, { compact: true })}</td>
       </tr>`;
     })
     .join('');
@@ -919,8 +920,7 @@ router.get('/onboarding/:id/activar', loadClinic, async (req, res) => {
             : `<div class="actions" style="margin-top:0"><a class="btn sec" href="/panel/c/${clinic.id}" target="_blank">Ver conversaciones</a>
                <form method="post" action="/onboarding/${clinic.id}/panel-token"><button class="btn" type="submit">Crear enlace para la recepción</button></form></div>`
         }
-        ${clinic.status !== 'activa' ? `<form method="post" action="/onboarding/${clinic.id}/eliminar" onsubmit="return confirm('¿Eliminar ${esc(clinic.name).replace(/'/g, '')} y todos sus datos? No se puede deshacer.')" style="margin-top:36px;border-top:1px solid #f1f5f9;padding-top:16px">
-          <button class="btn sec" type="submit" style="color:#b91c1c">Eliminar clínica</button> <span class="hint">Borra la clínica y todos sus datos (no toca su Google Calendar salvo las citas de prueba).</span></form>` : ''}`,
+        <div style="margin-top:36px;border-top:1px solid var(--border);padding-top:16px">${deleteForm(clinic)} <span class="hint">Borra la clínica y todos sus datos del asistente (no toca su Google Calendar salvo las citas de prueba, ni su número en YCloud).</span></div>`,
     })
   );
 });
@@ -939,15 +939,26 @@ router.post('/onboarding/:id/panel-token', loadClinic, (req, res) => {
   go(res, clinic, 'activar', { ok: 'Enlace del panel creado. Cópialo y compártelo solo con la recepción de la clínica.' });
 });
 
-router.post('/onboarding/:id/eliminar', loadClinic, async (req, res) => {
+// Botón «Eliminar»: pide escribir ELIMINAR (las clínicas activas atienden a
+// pacientes reales: que no se borre una por un clic despistado).
+function deleteForm(clinic, { compact = false } = {}) {
+  const name = esc(clinic.name).replace(/['"\\]/g, '');
+  const warn = clinic.status === 'activa' ? 'ATENCIÓN: está ACTIVA y atendiendo pacientes. ' : '';
+  return `<form method="post" action="/onboarding/${clinic.id}/eliminar" style="display:inline" onsubmit="const v=prompt('${warn}Vas a eliminar «${name}» y todos sus datos. No se puede deshacer. Escribe ELIMINAR para confirmar:'); if(v===null) return false; this.confirm.value=v; return true;"><input type="hidden" name="confirm"><button class="btn sec" type="submit" style="color:#B42318${compact ? ';padding:10px 14px' : ''}">${compact ? '🗑' : 'Eliminar clínica'}</button></form>`;
+}
+
+router.post('/onboarding/:id/eliminar', loadClinic, form, async (req, res) => {
   const { clinic } = req;
-  if (clinic.status === 'activa') return go(res, clinic, 'activar', { error: 'Pausa el asistente antes de eliminar la clínica.' });
+  if (String(req.body.confirm || '').trim().toUpperCase() !== 'ELIMINAR') {
+    return res.redirect(`/onboarding?error=${encodeURIComponent('No se ha eliminado: hay que escribir ELIMINAR para confirmar.')}`);
+  }
   try {
     await agenda.cancelTestAppointments(clinic);
   } catch (err) {
     console.error('Error cancelando citas de prueba al eliminar:', err);
   }
   db.transaction(() => {
+    db.prepare('DELETE FROM reminders_sent WHERE appointment_id IN (SELECT id FROM appointments WHERE clinic_id = ?)').run(clinic.id);
     for (const t of ['appointments', 'slots', 'conversations', 'patients', 'message_log', 'error_log', 'demo_leads', 'messages']) {
       db.prepare(`DELETE FROM ${t} WHERE clinic_id = ?`).run(clinic.id);
     }
