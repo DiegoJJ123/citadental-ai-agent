@@ -256,6 +256,10 @@ router.get('/onboarding/salud', (req, res) => {
                <form method="post" action="/onboarding/salud/email-prueba" data-busy="Enviando…"><button class="btn sec" type="submit">Enviar email de prueba</button></form>`
             : `<div class="warn"><strong>Desactivados.</strong> Para activarlos, en Render → <em>citadental-ai-bot → Environment</em> añade la variable <code>SMTP_PASS</code> con la contraseña del buzón <strong>${esc(mailer.sender())}</strong> (la de Hostinger) y guarda. No hace falta nada más.</div>`
         }
+        <h2>Ver los datos en Google Sheets</h2>
+        <p class="hint">Descarga una hoja de cálculo con una pestaña por tema (clínicas, citas, pacientes, chats, mensajes, leads de la demo y errores), en español y con fechas en hora de Madrid. No incluye datos técnicos sensibles (permisos de Google, claves ni enlaces privados).</p>
+        <a class="btn" href="/onboarding/salud/exportar">Descargar hoja de cálculo</a>
+        <p class="hint" style="margin-top:10px">Para abrirla en Google Sheets: entra en <a href="https://sheets.new" target="_blank" rel="noopener">sheets.new</a> → <em>Archivo → Importar → Subir</em> → elige el archivo descargado → <em>Reemplazar hoja de cálculo</em>. (O súbela a Google Drive y ábrela con Google Sheets.)</p>
         <h2>Copias de seguridad</h2>
         <p class="hint">Cada día se hace una copia de la base de datos (clínicas, conversaciones, configuración), se guardan las últimas 14 en el servidor y se envía por email para tenerla fuera de Render. Además, Render guarda una instantánea diaria del disco.</p>
         <div class="${last ? 'ok' : 'info'}">${last ? `Última copia: <strong>${esc(new Date(last.at).toLocaleString('es-ES', { timeZone: 'Europe/Madrid' }))}</strong> · ${(last.size / 1024).toFixed(0)} KB · ${last.emailed ? 'enviada por email ✅' : 'no enviada por email (avisos desactivados)'}` : 'Todavía no hay copias.'}</div>
@@ -285,6 +289,21 @@ router.post('/onboarding/salud/email-prueba', async (req, res) => {
 router.post('/onboarding/salud/copia', async (req, res) => {
   const r = await backup.runDailyBackup({ force: true });
   res.redirect('/onboarding/salud?' + (r.ok ? 'ok=' + encodeURIComponent(`Copia hecha (${(r.size / 1024).toFixed(0)} KB)${r.emailed ? ' y enviada por email' : ''}.`) : 'error=' + encodeURIComponent(`Error en la copia: ${r.error}`)));
+});
+
+router.get('/onboarding/salud/exportar', async (req, res) => {
+  try {
+    const buf = await require('../services/exportSheet').buildWorkbook();
+    const day = new Date().toISOString().slice(0, 10);
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="citadental-datos-${day}.xlsx"`,
+      'Cache-Control': 'no-store',
+    });
+    res.send(Buffer.from(buf));
+  } catch (err) {
+    res.redirect('/onboarding/salud?error=' + encodeURIComponent(`No se pudo exportar: ${err.message}`));
+  }
 });
 
 router.get('/onboarding/salud/descargar', (req, res) => {
