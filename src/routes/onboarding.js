@@ -518,7 +518,7 @@ function reminderSection(clinic) {
     <h2>Probar un recordatorio</h2>
     <p class="hint">Envía a un móvil un recordatorio de una cita ficticia (mañana a las 10:00) para ver cómo llega. Si ese móvil escribió a la clínica en las últimas 24 h sale como mensaje normal; si no, hace falta la plantilla aprobada.</p>
     <form method="post" action="/onboarding/${clinic.id}/recordatorio-prueba" data-busy="Enviando…" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-      <input type="tel" name="phone" placeholder="34600111222" value="${esc(clinic.reception_phone || '')}" style="max-width:240px">
+      <label style="margin:0 0 4px;width:100%">Móvil al que enviarlo <span class="hint">(con prefijo, sin + ni espacios)</span></label><input type="tel" name="phone" required placeholder="Ej.: 34662270093" value="${esc(clinic.reception_phone || '')}" style="max-width:260px">
       <button class="btn sec" type="submit">Enviar recordatorio de prueba</button>
     </form>
     <div class="actions" style="border-top:1px solid var(--border);padding-top:18px">
@@ -673,7 +673,7 @@ router.get('/onboarding/demo/whatsapp', (req, res) => {
         <h2>Probar un recordatorio</h2>
     <p class="hint">Envía a un móvil un recordatorio de una cita ficticia (mañana a las 10:00) para ver cómo llega. Si ese móvil escribió a la clínica en las últimas 24 h sale como mensaje normal; si no, hace falta la plantilla aprobada.</p>
     <form method="post" action="/onboarding/demo/recordatorio-prueba" data-busy="Enviando…" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-      <input type="tel" name="phone" placeholder="34600111222" value="${esc('')}" style="max-width:240px">
+      <label style="margin:0 0 4px;width:100%">Móvil al que enviarlo <span class="hint">(con prefijo, sin + ni espacios)</span></label><input type="tel" name="phone" required placeholder="Ej.: 34662270093" value="" style="max-width:260px">
       <button class="btn sec" type="submit">Enviar recordatorio de prueba</button>
     </form>
         <h2>Panel de conversaciones (para enseñar a clínicas)</h2>

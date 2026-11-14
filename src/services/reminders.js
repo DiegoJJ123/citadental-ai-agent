@@ -188,7 +188,7 @@ async function checkAndSendReminders(now = Date.now()) {
 // 24 h; si no, la plantilla aprobada). No marca nada como enviado.
 async function sendTestReminder(clinic, phone) {
   const to = String(phone || '').replace(/\D/g, '');
-  if (!/^\d{8,15}$/.test(to)) return { ok: false, error: 'Número no válido. Escríbelo con prefijo, p. ej. 34600111222.' };
+  if (!/^\d{8,15}$/.test(to)) return { ok: false, error: 'Escribe el número del móvil al que quieres enviarlo, con prefijo (p. ej. 34662270093).' };
   const tz = clinic?.schedule?.timezone || DEFAULT_TZ;
   const { todayIn, addDays } = require('./tz');
   const date = addDays(todayIn(tz), 1);
