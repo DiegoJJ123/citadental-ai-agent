@@ -6,6 +6,7 @@ const db = require('../db/db');
 const whatsapp = require('./whatsapp');
 const clinics = require('./clinics');
 const templates = require('./templates');
+const messages = require('./messages');
 const { zonedToDate, DEFAULT_TZ } = require('./tz');
 
 const CHECK_INTERVAL_MS = 15 * 60 * 1000; // cada 15 minutos
@@ -79,7 +80,10 @@ function logReminderError(appt, message) {
 // hay que darlo por gestionado (enviado, o imposible de enviar y registrado).
 async function sendReminder(appt, horas, clinic, now) {
   if (inServiceWindow(appt.clinic_id, appt.phone, now)) {
-    return whatsapp.sendText(appt.phone, reminderMessage(appt, horas, clinic), clinic);
+    const text = reminderMessage(appt, horas, clinic);
+    const ok = await whatsapp.sendText(appt.phone, text, clinic);
+    if (ok) messages.log(appt.clinic_id, appt.phone, 'out', 'bot', text);
+    return ok;
   }
   if (templates.isApproved(clinic?.reminder_template_status) && clinic.reminder_template_name) {
     try {
@@ -92,6 +96,7 @@ async function sendReminder(appt, horas, clinic, now) {
         },
         clinic
       );
+      messages.log(appt.clinic_id, appt.phone, 'out', 'bot', `Recordatorio de cita (plantilla): ${formatSlotForReminder(appt, clinic)}`);
       return true;
     } catch (err) {
       logReminderError(appt, `No se pudo enviar el recordatorio con plantilla: ${err.message}`);

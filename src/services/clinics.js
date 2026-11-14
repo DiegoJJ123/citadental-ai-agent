@@ -22,6 +22,7 @@ const UPDATABLE_FIELDS = [
   'whatsapp_phone',
   'reminder_template_name',
   'reminder_template_status',
+  'panel_token',
 ];
 
 function parseJson(text) {

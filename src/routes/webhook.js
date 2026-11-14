@@ -5,6 +5,7 @@ const { handleIncomingMessage, extractIncomingText, notifyLeadRepliedOnly } = re
 const db = require('../db/db');
 const clinics = require('../services/clinics');
 const templates = require('../services/templates');
+const messages = require('../services/messages');
 
 const router = express.Router();
 
@@ -55,6 +56,7 @@ async function processIncoming({ clinic, from, message, contactName, context, ch
     // propio bot de gestión de turnos contestando por botones). Los tratamos
     // como texto normal en vez de descartarlos con el fallback genérico.
     const userText = extractIncomingText(message);
+    messages.log(clinic.id, from, 'in', 'patient', userText ?? `[${message.type}]`);
 
     if (userText === null) {
       // Tipo sin texto legible (imagen, audio, ubicación, sticker...). Sigue
@@ -62,7 +64,11 @@ async function processIncoming({ clinic, from, message, contactName, context, ch
       // bot no pueda procesar el contenido con el LLM.
       if (clinic.isDemo) notifyLeadRepliedOnly(from, `[mensaje tipo ${message.type}]`);
       replied = true;
-      await whatsapp.sendText(from, 'Por ahora solo puedo leer mensajes de texto 🙂 ¿Puedes escribirme lo que necesitas?', clinic);
+      const paused = db.prepare('SELECT escalated FROM conversations WHERE clinic_id = ? AND phone = ?').get(clinic.id, from)?.escalated;
+      if (paused) return; // la recepción lleva este chat: el asistente no interviene
+      const notice = 'Por ahora solo puedo leer mensajes de texto 🙂 ¿Puedes escribirme lo que necesitas?';
+      await whatsapp.sendText(from, notice, clinic);
+      messages.log(clinic.id, from, 'out', 'bot', notice);
       return;
     }
 
@@ -70,12 +76,16 @@ async function processIncoming({ clinic, from, message, contactName, context, ch
 
     const reply = await handleIncomingMessage(clinic, from, userText, contactName);
     replied = true; // reply null = conversación pausada (escalada): silencio intencionado
-    if (reply) await whatsapp.sendText(from, reply, clinic);
+    if (reply) {
+      const ok = await whatsapp.sendText(from, reply, clinic);
+      messages.log(clinic.id, from, 'out', 'bot', ok ? reply : `[no enviado] ${reply}`);
+    }
   } catch (err) {
     console.error(`Error procesando mensaje entrante (${context}):`, err);
     logError(clinic?.id, from, context, err);
     if (clinic && from && !replied) {
       whatsapp.sendText(from, FALLBACK_REPLY, clinic).catch(() => {});
+      messages.log(clinic.id, from, 'out', 'bot', FALLBACK_REPLY);
     }
   }
 }
@@ -195,6 +205,8 @@ router.post('/webhook/ycloud', async (req, res) => {
             `INSERT INTO conversations (clinic_id, phone, history, escalated) VALUES (?, ?, '[]', 1)
              ON CONFLICT(clinic_id, phone) DO UPDATE SET escalated = 1, updated_at = CURRENT_TIMESTAMP`
           ).run(clinic.id, patient);
+          const body = m.text?.body || (m.type ? `[${m.type}]` : '[mensaje]');
+          messages.log(clinic.id, patient, 'out', 'human', body);
         }
         return;
       }

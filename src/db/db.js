@@ -261,6 +261,34 @@ if (db.prepare('PRAGMA user_version').get().user_version < 3) {
   raw.exec('PRAGMA user_version = 3;');
 }
 
+// ---------------------------------------------------------------------------
+// v4: panel de conversaciones.
+// - messages: registro completo de cada mensaje (el historial de
+//   conversations solo guarda los últimos turnos que necesita la IA).
+//   author: patient | bot | human (recepción desde el panel o la app) | system
+// - clinics.panel_token: enlace privado de la recepción de cada clínica.
+// ---------------------------------------------------------------------------
+if (db.prepare('PRAGMA user_version').get().user_version < 4) {
+  db.transaction(() => {
+    db.exec(`
+    CREATE TABLE messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      clinic_id INTEGER NOT NULL,
+      phone TEXT NOT NULL,
+      direction TEXT NOT NULL,          -- in | out
+      author TEXT NOT NULL,             -- patient | bot | human | system
+      body TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX idx_messages_chat ON messages(clinic_id, phone, id);
+    CREATE INDEX idx_messages_clinic_time ON messages(clinic_id, created_at);
+    ALTER TABLE clinics ADD COLUMN panel_token TEXT;
+    CREATE UNIQUE INDEX idx_clinics_panel_token ON clinics(panel_token) WHERE panel_token IS NOT NULL;
+    `);
+  })();
+  raw.exec('PRAGMA user_version = 4;');
+}
+
 // La clínica demo responde por el número del entorno (WHATSAPP_PHONE_NUMBER_ID).
 if (process.env.WHATSAPP_PHONE_NUMBER_ID) {
   db.prepare('UPDATE clinics SET whatsapp_phone_number_id = ? WHERE id = ? AND whatsapp_phone_number_id IS NOT ?').run(

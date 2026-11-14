@@ -181,7 +181,7 @@ router.get('/onboarding', (req, res) => {
         <td>${esc(c.whatsapp_display_phone || '—')}</td>
         <td>${monthCount.get(c.id).n}</td>
         <td>${pending ? `Pendiente: ${esc(pending.title)}` : '✓ Completo'}</td>
-        <td style="text-align:right"><a class="btn sec" href="/onboarding/${c.id}/${pending ? pending.key : 'activar'}">${c.status === 'activa' ? 'Gestionar' : 'Continuar'}</a></td>
+        <td style="text-align:right;white-space:nowrap"><a class="btn sec" href="/panel/c/${c.id}">Conversaciones</a> <a class="btn sec" href="/onboarding/${c.id}/${pending ? pending.key : 'activar'}">${c.status === 'activa' ? 'Gestionar' : 'Continuar'}</a></td>
       </tr>`;
     })
     .join('');
@@ -189,7 +189,7 @@ router.get('/onboarding', (req, res) => {
     page(req, {
       title: 'Clínicas',
       body: `<div class="actions" style="margin-top:0"><div><h1>Clínicas</h1><p class="sub">Da de alta una clínica nueva o continúa un alta a medias.</p></div>
-        <span><a class="btn sec" href="/onboarding/demo/whatsapp">WhatsApp de la demo</a> <a class="btn" href="/onboarding/nueva">+ Nueva clínica</a></span></div>
+        <span><a class="btn sec" href="/panel/c/1">Conversaciones demo</a> <a class="btn sec" href="/onboarding/demo/whatsapp">WhatsApp de la demo</a> <a class="btn" href="/onboarding/nueva">+ Nueva clínica</a></span></div>
         ${list.length ? `<table><thead><tr><th>Clínica</th><th>Estado</th><th>WhatsApp</th><th>Mensajes este mes</th><th>Progreso</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div class="info">Todavía no hay clínicas. Pulsa «Nueva clínica» para empezar.</div>'}`,
     })
   );
@@ -503,11 +503,31 @@ router.get('/onboarding/:id/whatsapp', loadClinic, (req, res) => {
             : ''
         }
         <h2>${connected ? 'Cambiar de número' : 'Cómo conectarlo'}</h2>
-        <ol class="guide">
-          <li>Ten a mano el <strong>móvil de la clínica</strong> con la app de <strong>WhatsApp Business</strong> (versión 2.24.17 o superior).</li>
-          <li>Abre <a href="https://www.ycloud.com/console/" target="_blank" rel="noopener">la consola de YCloud</a> → <em>Crear canal → WhatsApp Business App Coexistence</em> y conecta el número escaneando el QR con el móvil de la clínica (o con Facebook).</li>
-          <li>Cuando YCloud lo muestre como conectado, escribe aquí el número y pulsa «Comprobar y conectar»: comprobaremos que está activo, lo enlazaremos con el asistente y crearemos la plantilla de recordatorio.</li>
-        </ol>
+        <label>¿Este número ya está conectado a otro programa o chatbot de WhatsApp? <span class="hint">(Wati, Twilio, 360dialog, ManyChat, su CRM, otro proveedor…)</span></label>
+        <label class="provider"><input type="radio" name="ya_conectado" value="no" checked onchange="toggleGuide()"><span><strong>No</strong><br><span class="hint">Solo usan la app de WhatsApp Business en el móvil (lo habitual).</span></span></label>
+        <label class="provider"><input type="radio" name="ya_conectado" value="si" onchange="toggleGuide()"><span><strong>Sí</strong><br><span class="hint">Hay otro programa respondiendo o conectado a ese número.</span></span></label>
+        <div id="guide-coex">
+          <ol class="guide">
+            <li>Ten a mano el <strong>móvil de la clínica</strong> con la app de <strong>WhatsApp Business</strong> (versión 2.24.17 o superior).</li>
+            <li>Abre <a href="https://www.ycloud.com/console/" target="_blank" rel="noopener">la consola de YCloud</a> → <em>WhatsApp accounts → WhatsApp Business APP Coexistence → Get started</em>, acepta el aviso y pulsa <em>I'm ready to start</em>.</li>
+            <li>En la ventana de Meta: nombre legal exacto de la empresa, su web real (nunca «no tengo web») y <strong>escanea el QR con el móvil de la clínica</strong>. En la pantalla final pulsa <em>Ir a la configuración de la función</em>.</li>
+            <li>Espera a que el número salga como <strong>Connected</strong> en YCloud (pestaña <em>WhatsApp Business APP</em>). Si en 2 minutos no aparece, <strong>no repitas el alta</strong>: revisa antes.</li>
+            <li>Escribe aquí el número y pulsa «Comprobar y conectar».</li>
+          </ol>
+        </div>
+        <div id="guide-migr" style="display:none">
+          <div class="info"><strong>Es una migración, no una coexistencia.</strong> La opción «Coexistence» de YCloud rechaza números que ya están en la API de WhatsApp.</div>
+          <ol class="guide">
+            <li><strong>Antes de la cita</strong>, la clínica debe: desactivar la <strong>verificación en dos pasos (PIN)</strong> del número en su proveedor actual y avisarle de que se van (o cancelar).</li>
+            <li>Necesitas la <strong>cuenta de Facebook que administra su cuenta de WhatsApp Business</strong>.</li>
+            <li>En <a href="https://www.ycloud.com/console/" target="_blank" rel="noopener">YCloud</a> → <em>WhatsApp accounts → WhatsApp Business API → Get started → «Connect an existing WhatsApp business platform account»</em> → <em>I'm ready to start</em>.</li>
+            <li>En la ventana de Meta, elige <strong>su número que aparece como «Registrado»</strong>, confirma y en la pantalla final pulsa <em>Ir a la configuración de la función</em>.</li>
+            <li><strong>Muy importante:</strong> en Meta → <em>Configuración del negocio → Socios</em>, <strong>quita el acceso del proveedor antiguo</strong>. Si se queda, el asistente no podrá responder (error «another app is controlling this thread»).</li>
+            <li>Cuando el número salga como <strong>Connected</strong> en YCloud, escríbelo aquí y pulsa «Comprobar y conectar».</li>
+          </ol>
+          <div class="info">Si además usaban la app de WhatsApp Business en coexistencia con el proveedor antiguo, confirma con YCloud antes que la app del móvil seguirá funcionando tras la migración.</div>
+        </div>
+        <script>function toggleGuide(){ const si=document.querySelector('input[name=ya_conectado][value=si]').checked; document.getElementById('guide-coex').style.display=si?'none':''; document.getElementById('guide-migr').style.display=si?'':'none'; }</script>
         <form method="post" data-busy="Comprobando con YCloud…">
           <label>Número de WhatsApp de la clínica <span class="hint">(con prefijo, p. ej. +34 600 11 22 33)</span></label>
           <input type="tel" name="phone" required value="${esc(clinic.whatsapp_phone || '')}" placeholder="+34 600 11 22 33">
@@ -767,10 +787,25 @@ router.get('/onboarding/:id/activar', loadClinic, async (req, res) => {
             }
           </div>
         </form>
+        <h2>Panel de la recepción</h2>
+        <p class="hint">Enlace privado para que la recepción vea las conversaciones del asistente, lo pause o reactive en un chat y responda desde la web. Quien tenga el enlace puede entrar: compártelo solo con la clínica.</p>
+        ${
+          clinic.panel_token
+            ? `<input type="text" readonly value="${esc(`${publicBaseUrl(req)}/panel/t/${clinic.panel_token}`)}" onclick="this.select()">
+               <div class="actions" style="margin-top:10px"><a class="btn sec" href="/panel/c/${clinic.id}" target="_blank">Ver conversaciones</a>
+               <form method="post" action="/onboarding/${clinic.id}/panel-token" onsubmit="return confirm('El enlace actual dejará de funcionar. ¿Crear uno nuevo?')"><button class="btn sec" type="submit">Crear enlace nuevo</button></form></div>`
+            : `<div class="actions" style="margin-top:0"><a class="btn sec" href="/panel/c/${clinic.id}" target="_blank">Ver conversaciones</a>
+               <form method="post" action="/onboarding/${clinic.id}/panel-token"><button class="btn" type="submit">Crear enlace para la recepción</button></form></div>`
+        }
         ${clinic.status !== 'activa' ? `<form method="post" action="/onboarding/${clinic.id}/eliminar" onsubmit="return confirm('¿Eliminar ${esc(clinic.name).replace(/'/g, '')} y todos sus datos? No se puede deshacer.')" style="margin-top:36px;border-top:1px solid #f1f5f9;padding-top:16px">
           <button class="btn sec" type="submit" style="color:#b91c1c">Eliminar clínica</button> <span class="hint">Borra la clínica y todos sus datos (no toca su Google Calendar salvo las citas de prueba).</span></form>` : ''}`,
     })
   );
+});
+
+router.post('/onboarding/:id/panel-token', loadClinic, (req, res) => {
+  const clinic = clinics.updateClinic(req.clinic.id, { panel_token: require('./panel').newPanelToken() });
+  go(res, clinic, 'activar', { ok: 'Enlace del panel creado. Cópialo y compártelo solo con la recepción de la clínica.' });
 });
 
 router.post('/onboarding/:id/eliminar', loadClinic, async (req, res) => {

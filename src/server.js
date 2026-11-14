@@ -4,6 +4,7 @@ const webhookRouter = require('./routes/webhook');
 const dashboardRouter = require('./routes/dashboard');
 const productMetricsRouter = require('./routes/productMetrics');
 const onboardingRouter = require('./routes/onboarding');
+const panelRouter = require('./routes/panel');
 const { startReminderScheduler } = require('./services/reminders');
 const { ensureDemoSlots } = require('./db/seed');
 
@@ -19,6 +20,7 @@ app.use('/', webhookRouter);
 app.use('/', dashboardRouter);
 app.use('/', productMetricsRouter);
 app.use('/', onboardingRouter);
+app.use('/', panelRouter);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
