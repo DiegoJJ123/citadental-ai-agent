@@ -126,7 +126,7 @@ async function runChecks({ notify = true } = {}) {
     } catch (err) {
       issues = [{ level: 'yellow', code: 'check_error', text: `No se pudo revisar: ${err.message}` }];
     }
-    result.clinics[c.id] = { name: c.isDemo ? `${c.name} (demo)` : c.name, level: levelOf(issues), issues };
+    result.clinics[c.id] = { name: c.isDemo && !/demo/i.test(c.name) ? `${c.name} (demo)` : c.name, demo: c.isDemo, level: levelOf(issues), issues };
   }
 
   // Avisos solo de lo que cambia respecto a la revisión anterior.

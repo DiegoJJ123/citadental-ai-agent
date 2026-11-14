@@ -231,7 +231,7 @@ router.get('/onboarding/salud', (req, res) => {
       : '<div class="check"><span class="i">🟢</span><span>Todo bien.</span></div>';
   const clinicsHtml = st
     ? Object.entries(st.clinics || {})
-        .map(([id, c]) => `<h2 style="display:flex;align-items:center;gap:8px">${LEVEL_ICON[c.level]} ${esc(c.name)} <a class="hint" href="/onboarding/${id}/activar" style="font-size:13px;font-weight:500">gestionar</a></h2>${issueList(c.issues)}`)
+        .map(([id, c]) => `<h2 style="display:flex;align-items:center;gap:8px">${LEVEL_ICON[c.level]} ${esc(c.name)} <a class="hint" href="${c.demo ? '/onboarding/demo/whatsapp' : `/onboarding/${id}/activar`}" style="font-size:13px;font-weight:500">gestionar</a></h2>${issueList(c.issues)}`)
         .join('') || '<p class="hint">No hay clínicas activas.</p>'
     : '';
   const last = backup.lastBackup();
