@@ -505,6 +505,14 @@ router.get('/onboarding/:id/whatsapp', loadClinic, (req, res) => {
         <label>¿Este número ya está conectado a otro programa o chatbot de WhatsApp? <span class="hint">(Wati, Twilio, 360dialog, ManyChat, su CRM, otro proveedor…)</span></label>
         <label class="provider"><input type="radio" name="ya_conectado" value="no" checked onchange="toggleGuide()"><span><strong>No</strong><br><span class="hint">Solo usan la app de WhatsApp Business en el móvil (lo habitual).</span></span></label>
         <label class="provider"><input type="radio" name="ya_conectado" value="si" onchange="toggleGuide()"><span><strong>Sí</strong><br><span class="hint">Hay otro programa respondiendo o conectado a ese número.</span></span></label>
+        <div class="info"><strong>Antes de empezar: acceso al Facebook de la clínica.</strong> Para conectar el número hace falta un Facebook que administre el negocio de la clínica en Meta. <strong>Nunca pidas su contraseña.</strong> Lo mejor es que la clínica te añada como administrador (puede hacerlo antes de la cita, desde cualquier ordenador):
+          <ol class="guide" style="margin:8px 0 4px">
+            <li>La clínica entra en <a href="https://business.facebook.com/latest/settings/business_users" target="_blank" rel="noopener">business.facebook.com → Configuración → Usuarios → Personas</a>.</li>
+            <li>Pulsa <strong>«Agregar»</strong> (o «Invitar personas»), escribe tu email <strong>${esc(req.dashboardEmail || 'diegoezequiel02@gmail.com')}</strong> y elige <strong>Control total</strong> (administrador).</li>
+            <li>En el siguiente paso, que te asigne la <strong>cuenta de WhatsApp</strong> de la clínica con <strong>control total</strong>, y pulsa <strong>«Enviar invitación»</strong>.</li>
+            <li>Te llega un email de Meta: <strong>acepta la invitación</strong>. Desde ese momento haces todo con tu propio Facebook.</li>
+          </ol>
+          Si el día de la instalación no lo han hecho, vale también que el responsable de la clínica escriba <strong>él mismo</strong> su usuario y contraseña cuando se abra la ventana de Meta. Al terminar, la clínica puede quitarte el acceso o dejártelo para soporte.</div>
         <div id="guide-coex">
           <ol class="guide">
             <li>Ten a mano el <strong>móvil de la clínica</strong> con la app de <strong>WhatsApp Business</strong> (versión 2.24.17 o superior).</li>
