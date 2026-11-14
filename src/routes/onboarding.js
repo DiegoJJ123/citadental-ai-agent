@@ -14,6 +14,9 @@ const { INFO_FIELDS, extractClinicInfo } = require('../services/siteExtractor');
 const { handleIncomingMessage } = require('../services/agent');
 const ycloud = require('../services/ycloud');
 const reminders = require('../services/reminders');
+const health = require('../services/health');
+const backup = require('../services/backup');
+const mailer = require('../services/mailer');
 const templates = require('../services/templates');
 
 const router = express.Router();
@@ -108,7 +111,7 @@ function page(req, { title, clinic, step, body }) {
   ].join('');
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex"><title>${esc(title)} · CitaDental AI</title>${brand.HEAD}<style>${CSS}</style></head><body>${brand.BG}
-<header class="topbar"><a href="/onboarding" class="logo-link" style="text-decoration:none">${brand.logo('Alta de clínicas')}</a><nav><span class="who">${esc(req.dashboardEmail || '')}</span><a href="/onboarding">Clínicas</a><a href="/panel/c/1">Conversaciones demo</a><a href="/dashboard">Panel demo</a><a href="/dashboard/logout">Cerrar sesión</a></nav></header>
+<header class="topbar"><a href="/onboarding" class="logo-link" style="text-decoration:none">${brand.logo('Alta de clínicas')}</a><nav><span class="who">${esc(req.dashboardEmail || '')}</span><a href="/onboarding">Clínicas</a><a href="/onboarding/salud">${healthNavLabel()}</a><a href="/panel/c/1">Conversaciones demo</a><a href="/dashboard">Panel demo</a><a href="/dashboard/logout">Cerrar sesión</a></nav></header>
 <div class="wrap ${clinic ? '' : 'single'}">${nav}<main class="card">${flash}${body}</main></div>${brand.FOOTER}
 <script>document.querySelectorAll('form[data-busy]').forEach(f=>f.addEventListener('submit',()=>{const b=f.querySelector('button[type=submit]');if(b){b.disabled=true;b.textContent=f.dataset.busy;}}));</script>
 </body></html>`;
@@ -189,11 +192,110 @@ router.get('/onboarding', (req, res) => {
   res.send(
     page(req, {
       title: 'Clínicas',
-      body: `<div class="actions" style="margin-top:0"><div class="hello"><img src="${brand.MASCOT_URL}" alt="" class="float"><div><span class="eyebrow"><i></i>Panel de CitaDental AI</span><h1 style="margin-top:8px">Tus <span class="text-gradient">clínicas</span></h1><p class="sub" style="margin:0">${list.length ? `${list.length} clínica${list.length === 1 ? '' : 's'} · ${list.filter((c) => c.status === 'activa').length} activa${list.filter((c) => c.status === 'activa').length === 1 ? '' : 's'}. Da de alta una nueva o continúa un alta a medias.` : 'Da de alta tu primera clínica.'}</p></div></div>
+      body: `${healthBanner()}<div class="actions" style="margin-top:0"><div class="hello"><img src="${brand.MASCOT_URL}" alt="" class="float"><div><span class="eyebrow"><i></i>Panel de CitaDental AI</span><h1 style="margin-top:8px">Tus <span class="text-gradient">clínicas</span></h1><p class="sub" style="margin:0">${list.length ? `${list.length} clínica${list.length === 1 ? '' : 's'} · ${list.filter((c) => c.status === 'activa').length} activa${list.filter((c) => c.status === 'activa').length === 1 ? '' : 's'}. Da de alta una nueva o continúa un alta a medias.` : 'Da de alta tu primera clínica.'}</p></div></div>
         <span><a class="btn sec" href="/panel/c/1">Conversaciones demo</a> <a class="btn sec" href="/onboarding/demo/whatsapp">WhatsApp de la demo</a> <a class="btn" href="/onboarding/nueva">+ Nueva clínica</a></span></div>
         ${list.length ? `<div style="overflow-x:auto;margin-top:18px"><table><thead><tr><th>Clínica</th><th>Estado</th><th>WhatsApp</th><th>Mensajes este mes</th><th>Progreso</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div style="padding:30px 0">${brand.mascot('Todavía no hay clínicas. Pulsa <b>«+ Nueva clínica»</b> y te guío paso a paso.', { size: 120 })}</div>`}`,
     })
   );
+});
+
+// ---------------------------------------------------------------------------
+// Estado del servicio: vigilancia, avisos por email y copias de seguridad
+// ---------------------------------------------------------------------------
+const LEVEL_ICON = { red: '🔴', yellow: '🟡', green: '🟢' };
+
+function healthSummary() {
+  const st = health.lastState();
+  if (!st) return null;
+  const all = [...(st.global || []), ...Object.values(st.clinics || {}).flatMap((c) => c.issues)];
+  return { st, reds: all.filter((i) => i.level === 'red').length, yellows: all.filter((i) => i.level === 'yellow').length };
+}
+
+function healthNavLabel() {
+  const h = healthSummary();
+  if (!h) return 'Estado';
+  return h.reds ? `🔴 Estado (${h.reds})` : h.yellows ? 'Estado 🟡' : 'Estado 🟢';
+}
+
+function healthBanner() {
+  const h = healthSummary();
+  if (!h || !h.reds) return '';
+  return `<div class="err" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span><strong>🔴 Hay ${h.reds} problema(s) importante(s)</strong> en el servicio.</span><a class="btn sec" href="/onboarding/salud">Ver estado</a></div>`;
+}
+
+router.get('/onboarding/salud', (req, res) => {
+  const st = health.lastState();
+  const issueList = (issues) =>
+    issues.length
+      ? issues.map((i) => `<div class="check"><span class="i">${LEVEL_ICON[i.level]}</span><span style="flex:1">${esc(i.text)}</span></div>`).join('')
+      : '<div class="check"><span class="i">🟢</span><span>Todo bien.</span></div>';
+  const clinicsHtml = st
+    ? Object.entries(st.clinics || {})
+        .map(([id, c]) => `<h2 style="display:flex;align-items:center;gap:8px">${LEVEL_ICON[c.level]} ${esc(c.name)} <a class="hint" href="/onboarding/${id}/activar" style="font-size:13px;font-weight:500">gestionar</a></h2>${issueList(c.issues)}`)
+        .join('') || '<p class="hint">No hay clínicas activas.</p>'
+    : '';
+  const last = backup.lastBackup();
+  const files = backup.listBackups();
+  res.send(
+    page(req, {
+      title: 'Estado',
+      body: `<span class="eyebrow ${st && !healthSummary().reds ? 'live' : ''}"><i></i>Vigilancia automática cada hora</span>
+        <h1 style="margin-top:8px">Estado del <span class="text-gradient">servicio</span></h1>
+        <p class="sub">Cada hora se revisa cada clínica activa: que su número esté conectado y reciba mensajes, que WhatsApp acepte las respuestas, Google Calendar, la plantilla de recordatorio y la IA. Si aparece un problema nuevo (o se resuelve), te llega un email a <strong>${esc(mailer.recipient())}</strong>.</p>
+        <div class="actions" style="margin-top:0">
+          <span class="hint">${st ? `Última revisión: ${esc(new Date(st.checkedAt).toLocaleString('es-ES', { timeZone: 'Europe/Madrid' }))}` : 'Todavía no se ha hecho ninguna revisión.'}</span>
+          <form method="post" action="/onboarding/salud/revisar" data-busy="Revisando…"><button class="btn" type="submit">Revisar ahora</button></form>
+        </div>
+        <h2>General</h2>
+        ${st ? issueList(st.global || []) : ''}
+        ${clinicsHtml}
+        <h2>Avisos por email</h2>
+        ${
+          mailer.isConfigured()
+            ? `<div class="ok">Activados: se envían desde <strong>${esc(mailer.sender())}</strong> a <strong>${esc(mailer.recipient())}</strong>.</div>
+               <form method="post" action="/onboarding/salud/email-prueba" data-busy="Enviando…"><button class="btn sec" type="submit">Enviar email de prueba</button></form>`
+            : `<div class="warn"><strong>Desactivados.</strong> Para activarlos, en Render → <em>citadental-ai-bot → Environment</em> añade la variable <code>SMTP_PASS</code> con la contraseña del buzón <strong>${esc(mailer.sender())}</strong> (la de Hostinger) y guarda. No hace falta nada más.</div>`
+        }
+        <h2>Copias de seguridad</h2>
+        <p class="hint">Cada día se hace una copia de la base de datos (clínicas, conversaciones, configuración), se guardan las últimas 14 en el servidor y se envía por email para tenerla fuera de Render. Además, Render guarda una instantánea diaria del disco.</p>
+        <div class="${last ? 'ok' : 'info'}">${last ? `Última copia: <strong>${esc(new Date(last.at).toLocaleString('es-ES', { timeZone: 'Europe/Madrid' }))}</strong> · ${(last.size / 1024).toFixed(0)} KB · ${last.emailed ? 'enviada por email ✅' : 'no enviada por email (avisos desactivados)'}` : 'Todavía no hay copias.'}</div>
+        ${files.length ? `<p class="hint">En el servidor: ${files.map((f) => esc(f.name)).join(' · ')}</p>` : ''}
+        <div class="actions" style="justify-content:flex-start">
+          <a class="btn sec" href="/onboarding/salud/descargar">Descargar copia ahora</a>
+          <form method="post" action="/onboarding/salud/copia" data-busy="Haciendo copia…"><button class="btn sec" type="submit">Hacer copia y enviarla por email</button></form>
+        </div>`,
+    })
+  );
+});
+
+router.post('/onboarding/salud/revisar', async (req, res) => {
+  try {
+    await health.runChecks();
+    res.redirect('/onboarding/salud?ok=' + encodeURIComponent('Revisión hecha.'));
+  } catch (err) {
+    res.redirect('/onboarding/salud?error=' + encodeURIComponent(`No se pudo revisar: ${err.message}`));
+  }
+});
+
+router.post('/onboarding/salud/email-prueba', async (req, res) => {
+  const ok = await mailer.send({ subject: '✅ Prueba de avisos de CitaDental AI', text: 'Si lees esto, los avisos por email funcionan.' });
+  res.redirect('/onboarding/salud?' + (ok ? 'ok=' + encodeURIComponent(`Email de prueba enviado a ${mailer.recipient()}.`) : 'error=' + encodeURIComponent('No se pudo enviar. Revisa SMTP_PASS en Render.')));
+});
+
+router.post('/onboarding/salud/copia', async (req, res) => {
+  const r = await backup.runDailyBackup({ force: true });
+  res.redirect('/onboarding/salud?' + (r.ok ? 'ok=' + encodeURIComponent(`Copia hecha (${(r.size / 1024).toFixed(0)} KB)${r.emailed ? ' y enviada por email' : ''}.`) : 'error=' + encodeURIComponent(`Error en la copia: ${r.error}`)));
+});
+
+router.get('/onboarding/salud/descargar', (req, res) => {
+  try {
+    const buf = backup.freshBackupBuffer();
+    const day = new Date().toISOString().slice(0, 10);
+    res.set({ 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="citadental-${day}.sqlite.gz"`, 'Cache-Control': 'no-store' });
+    res.send(buf);
+  } catch (err) {
+    res.redirect('/onboarding/salud?error=' + encodeURIComponent(`No se pudo hacer la copia: ${err.message}`));
+  }
 });
 
 // ---------------------------------------------------------------------------

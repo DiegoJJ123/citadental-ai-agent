@@ -6,6 +6,7 @@ const productMetricsRouter = require('./routes/productMetrics');
 const onboardingRouter = require('./routes/onboarding');
 const panelRouter = require('./routes/panel');
 const { startReminderScheduler } = require('./services/reminders');
+const { startHealthScheduler } = require('./services/health');
 const { ensureDemoSlots } = require('./db/seed');
 
 const app = express();
@@ -27,6 +28,7 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`CitaDental AI bot escuchando en el puerto ${PORT}`);
   startReminderScheduler();
+  startHealthScheduler();
   const seedDemo = () => {
     try {
       const { added } = ensureDemoSlots();

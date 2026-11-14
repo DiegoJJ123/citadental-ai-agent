@@ -128,6 +128,7 @@ function verifySignature(header, rawBody, secret, { toleranceSec = 300, now = Da
 }
 
 module.exports = {
+  call,
   e164,
   sendText,
   sendTemplate,
