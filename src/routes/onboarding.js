@@ -180,7 +180,7 @@ router.get('/onboarding', (req, res) => {
         <td><span class="badge b-${esc(c.status)}">${esc(c.status)}</span></td>
         <td>${esc(c.whatsapp_display_phone || '—')}</td>
         <td>${monthCount.get(c.id).n}</td>
-        <td>${pending ? `Pendiente: ${esc(pending.title)}` : '✓ Completo'}</td>
+        <td>${pending ? `Pendiente: ${esc(pending.title)}` : !realMessageReceived(c) ? '<span style="color:#A34E12;font-weight:600">⚠️ No ha llegado ningún mensaje al número</span>' : '✓ Completo'}</td>
         <td style="text-align:right;white-space:nowrap"><a class="btn sec" href="/panel/c/${c.id}">Conversaciones</a> <a class="btn sec" href="/onboarding/${c.id}/${pending ? pending.key : 'activar'}">${c.status === 'activa' ? 'Gestionar' : 'Continuar'}</a></td>
       </tr>`;
     })
