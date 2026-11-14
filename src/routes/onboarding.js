@@ -508,21 +508,28 @@ router.get('/onboarding/:id/whatsapp', loadClinic, (req, res) => {
         <div id="guide-coex">
           <ol class="guide">
             <li>Ten a mano el <strong>móvil de la clínica</strong> con la app de <strong>WhatsApp Business</strong> (versión 2.24.17 o superior).</li>
-            <li>Abre <a href="https://www.ycloud.com/console/" target="_blank" rel="noopener">la consola de YCloud</a> → <em>WhatsApp accounts → WhatsApp Business APP Coexistence → Get started</em>, acepta el aviso y pulsa <em>I'm ready to start</em>.</li>
-            <li>En la ventana de Meta: nombre legal exacto de la empresa, su web real (nunca «no tengo web») y <strong>escanea el QR con el móvil de la clínica</strong>. En la pantalla final pulsa <em>Ir a la configuración de la función</em>.</li>
-            <li>Espera a que el número salga como <strong>Connected</strong> en YCloud (pestaña <em>WhatsApp Business APP</em>). Si en 2 minutos no aparece, <strong>no repitas el alta</strong>: revisa antes.</li>
-            <li>Escribe aquí el número y pulsa «Comprobar y conectar».</li>
+            <li>Abre <a href="https://www.ycloud.com/console/" target="_blank" rel="noopener">YCloud</a> con la cuenta de CitaDental AI (<em>hola@citadentalai.site</em>). En el menú: <em>WhatsApp Manager → WhatsApp accounts</em> → botón <strong>«Create Channel»</strong> (arriba a la derecha).</li>
+            <li>En la ventana que sale, elige <strong>«WhatsApp Business APP Coexistence» → «Get started»</strong>. Acepta el aviso y pulsa <strong>«I'm ready to start»</strong>: se abre una ventana de Meta.</li>
+            <li>En la ventana de Meta: inicia sesión con el <strong>Facebook de la clínica</strong> (o uno que administre su negocio) → <strong>«Continuar»</strong>. Pon el <strong>nombre legal exacto</strong> de la empresa y su <strong>web real</strong> (nunca «no tengo web»).</li>
+            <li>Cuando aparezca el QR, en el móvil de la clínica abre WhatsApp Business → <em>Ajustes → Dispositivos vinculados</em> (o el aviso que salga) y <strong>escanea el QR</strong>. Acepta compartir el historial si lo pregunta.</li>
+            <li>En la pantalla final de Meta pulsa <strong>«Ir a la configuración de la función»</strong> y cierra la ventana.</li>
+            <li>En YCloud, pestaña <strong>«WhatsApp Business APP»</strong>, espera a que el número salga como <strong>Connected</strong>. Si en 2 minutos no aparece, <strong>no repitas el alta</strong>: revisa antes.</li>
+            <li>Escribe aquí abajo el número y pulsa <strong>«Comprobar y conectar»</strong>.</li>
           </ol>
         </div>
         <div id="guide-migr" style="display:none">
           <div class="info"><strong>Es una migración, no una coexistencia.</strong> La opción «Coexistence» de YCloud rechaza números que ya están en la API de WhatsApp.</div>
           <ol class="guide">
-            <li><strong>Antes de la cita</strong>, la clínica debe: desactivar la <strong>verificación en dos pasos (PIN)</strong> del número en su proveedor actual y avisarle de que se van (o cancelar).</li>
-            <li>Necesitas la <strong>cuenta de Facebook que administra su cuenta de WhatsApp Business</strong>.</li>
-            <li>En <a href="https://www.ycloud.com/console/" target="_blank" rel="noopener">YCloud</a> → <em>WhatsApp accounts → WhatsApp Business API → Get started → «Connect an existing WhatsApp business platform account»</em> → <em>I'm ready to start</em>.</li>
-            <li>En la ventana de Meta, elige <strong>su número que aparece como «Registrado»</strong>, confirma y en la pantalla final pulsa <em>Ir a la configuración de la función</em>.</li>
-            <li><strong>Muy importante:</strong> en Meta → <em>Configuración del negocio → Socios</em>, <strong>quita el acceso del proveedor antiguo</strong>. Si se queda, el asistente no podrá responder (error «another app is controlling this thread»).</li>
-            <li>Cuando el número salga como <strong>Connected</strong> en YCloud, escríbelo aquí y pulsa «Comprobar y conectar».</li>
+            <li><strong>Antes de la cita</strong>, la clínica debe avisar a su proveedor actual de que se van (o cancelar) y, si puede, desactivar la <strong>verificación en dos pasos (PIN)</strong> del número. Se hace en Meta → <em>Administrador de WhatsApp → Números de teléfono → ⚙ del número → Verificación en dos pasos → Desactivar</em> (llega un email para confirmar). Si esa opción no aparece, sigue: solo hará falta si Meta da error de PIN.</li>
+            <li>Necesitas el <strong>Facebook que administra la cuenta de WhatsApp Business de la clínica</strong> (el suyo, o que te hayan añadido como administrador).</li>
+            <li>Abre <a href="https://www.ycloud.com/console/" target="_blank" rel="noopener">YCloud</a> con la cuenta de CitaDental AI (<em>hola@citadentalai.site</em>). En el menú: <em>WhatsApp Manager → WhatsApp accounts</em> → botón <strong>«Create Channel»</strong> (arriba a la derecha).</li>
+            <li>En la ventana que sale, elige <strong>«WhatsApp Business API» → «Get started»</strong>. <strong>No</strong> elijas «Coexistence».</li>
+            <li>YCloud pregunta <em>«How would you like to connect your number?»</em>. Elige la segunda opción: <strong>«Connect an existing WhatsApp business platform account»</strong> (<em>Move a phone number connected to another BSP to YCloud</em>). <strong>No</strong> elijas «Create and connect a new…».</li>
+            <li>Pulsa <strong>«I'm ready to start»</strong>: se abre una ventana de Meta. Pulsa <strong>«Continuar»</strong>.</li>
+            <li>En <em>«Agrega tu número de teléfono de WhatsApp»</em>, abre el desplegable y elige <strong>el número de la clínica que aparece como «Registrado»</strong>. Ojo: pueden salir números de otras empresas a las que tenga acceso ese Facebook; elige solo el de la clínica. Pulsa <strong>«Siguiente»</strong>.</li>
+            <li>En <em>«Activos comerciales»</em> el portfolio y la cuenta de WhatsApp se rellenan solos: comprueba que son los de la clínica y pulsa <strong>«Siguiente»</strong> hasta el final. En la última pantalla pulsa <strong>«Ir a la configuración de la función»</strong>.</li>
+            <li><strong>Muy importante:</strong> en Meta → <em>Configuración del negocio → Cuentas de mensajes</em> → la cuenta de la clínica → pestaña <strong>«Socios»</strong>: debe quedar <strong>solo YCloud</strong>. Si aparece el proveedor antiguo, <em>Administrar → Eliminar acceso</em>. Si se queda, el asistente no podrá responder (error «another app is controlling this thread»).</li>
+            <li>En YCloud, pestaña <strong>«WhatsApp Business API»</strong>, espera a que el número salga como <strong>Connected</strong>. Escríbelo aquí abajo y pulsa <strong>«Comprobar y conectar»</strong>.</li>
           </ol>
           <div class="info">Si además usaban la app de WhatsApp Business en coexistencia con el proveedor antiguo, confirma con YCloud antes que la app del móvil seguirá funcionando tras la migración.</div>
         </div>
