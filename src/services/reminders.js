@@ -183,6 +183,45 @@ async function checkAndSendReminders(now = Date.now()) {
   }
 }
 
+// Recordatorio de prueba (onboarding): cita ficticia mañana a las 10:00, por el
+// mismo camino que uno real (texto libre si el número escribió en las últimas
+// 24 h; si no, la plantilla aprobada). No marca nada como enviado.
+async function sendTestReminder(clinic, phone) {
+  const to = String(phone || '').replace(/\D/g, '');
+  if (!/^\d{8,15}$/.test(to)) return { ok: false, error: 'Número no válido. Escríbelo con prefijo, p. ej. 34600111222.' };
+  const tz = clinic?.schedule?.timezone || DEFAULT_TZ;
+  const { todayIn, addDays } = require('./tz');
+  const date = addDays(todayIn(tz), 1);
+  const treatment = require('./agenda').treatmentsOf(clinic)?.[0]?.key || 'limpieza';
+  const patient = db.prepare('SELECT name FROM patients WHERE clinic_id = ? AND phone = ?').get(clinic.id, to);
+  const appt = { clinic_id: clinic.id, phone: to, patient_name: patient?.name || null, date, time: '10:00', treatment };
+  if (inServiceWindow(clinic.id, to)) {
+    const text = reminderMessage(appt, clinic);
+    const ok = await whatsapp.sendText(to, text, clinic);
+    if (ok) messages.log(clinic.id, to, 'out', 'bot', `[Recordatorio de prueba] ${text}`);
+    return ok ? { ok: true, via: 'texto', text } : { ok: false, error: 'WhatsApp no aceptó el mensaje.' };
+  }
+  if (templates.isApproved(clinic?.reminder_template_status) && clinic.reminder_template_name) {
+    const values = templateValues(appt, clinic);
+    try {
+      await whatsapp.sendTemplate(
+        to,
+        { name: clinic.reminder_template_name, language: templates.LANGUAGE, bodyParams: templates.clinicParams(clinic).map((k) => values[k]) },
+        clinic
+      );
+      const text = templates.render(clinic, values);
+      messages.log(clinic.id, to, 'out', 'bot', `[Recordatorio de prueba] ${text}`);
+      return { ok: true, via: 'plantilla', text };
+    } catch (err) {
+      return { ok: false, error: `Meta rechazó la plantilla: ${err.message}` };
+    }
+  }
+  return {
+    ok: false,
+    error: `Ese número no ha escrito a la clínica en las últimas 24 h y la plantilla aún no está aprobada (${clinic?.reminder_template_status || 'sin enviar'}). Escribe primero «hola» al número de la clínica desde ese móvil y vuelve a probar.`,
+  };
+}
+
 function startReminderScheduler() {
   checkAndSendReminders().catch((err) => console.error('Error en comprobación inicial de recordatorios:', err));
   setInterval(() => {
@@ -199,6 +238,7 @@ module.exports = {
   dueReminder,
   hoursLabel,
   reminderMessage,
+  sendTestReminder,
   DEFAULT_HOURS,
   HOUR_OPTIONS,
   MAX_REMINDERS,

@@ -514,6 +514,12 @@ function reminderSection(clinic) {
     <script>(function(){const ex=${examples};const ta=document.getElementById('tpltext');const pv=document.getElementById('tplprev');
       window.upd=function(){pv.textContent=ta.value.replace(/\\{([a-z]+)\\}/g,(m,k)=>ex[k]||m);};ta.addEventListener('input',upd);upd();
       document.querySelectorAll('.tok').forEach(b=>b.addEventListener('click',()=>{const t=b.dataset.tok,s=ta.selectionStart,e=ta.selectionEnd;ta.value=ta.value.slice(0,s)+t+ta.value.slice(e);ta.focus();ta.selectionStart=ta.selectionEnd=s+t.length;upd();}));})();</script>
+    <h2>Probar un recordatorio</h2>
+    <p class="hint">Envía a un móvil un recordatorio de una cita ficticia (mañana a las 10:00) para ver cómo llega. Si ese móvil escribió a la clínica en las últimas 24 h sale como mensaje normal; si no, hace falta la plantilla aprobada.</p>
+    <form method="post" action="/onboarding/${clinic.id}/recordatorio-prueba" data-busy="Enviando…" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <input type="tel" name="phone" placeholder="34600111222" value="${esc(clinic.reception_phone || '')}" style="max-width:240px">
+      <button class="btn sec" type="submit">Enviar recordatorio de prueba</button>
+    </form>
     <div class="actions" style="border-top:1px solid var(--border);padding-top:18px">
       <span class="hint">${clinic.reminder_template_name ? 'Puedes seguir mientras Meta revisa la plantilla.' : 'Puedes enviar la plantilla ahora o más tarde.'}</span>
       <a class="btn green" href="/onboarding/${clinic.id}/recepcion">Continuar: avisos a recepción →</a></div>`;
@@ -663,6 +669,12 @@ router.get('/onboarding/demo/whatsapp', (req, res) => {
           <input type="tel" name="phone" required value="${esc(demo.whatsapp_phone || '+34 602 131 819')}">
           <div class="actions"><a class="btn sec" href="/onboarding">← Clínicas</a><button class="btn" type="submit">Pasar la demo a YCloud</button></div>
         </form>
+        <h2>Probar un recordatorio</h2>
+    <p class="hint">Envía a un móvil un recordatorio de una cita ficticia (mañana a las 10:00) para ver cómo llega. Si ese móvil escribió a la clínica en las últimas 24 h sale como mensaje normal; si no, hace falta la plantilla aprobada.</p>
+    <form method="post" action="/onboarding/demo/recordatorio-prueba" data-busy="Enviando…" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <input type="tel" name="phone" placeholder="34600111222" value="${esc('')}" style="max-width:240px">
+      <button class="btn sec" type="submit">Enviar recordatorio de prueba</button>
+    </form>
         <h2>Panel de conversaciones (para enseñar a clínicas)</h2>
         <p class="hint">Enlace privado al panel de la demo, igual al que recibe la recepción de una clínica. Quien lo tenga ve los chats de la demo.</p>
         ${demo.panel_token ? `<input type="text" readonly value="${esc(`${publicBaseUrl(req)}/panel/${demo.panel_token}`)}" onclick="this.select()">` : ''}
@@ -691,6 +703,20 @@ router.post('/onboarding/:id/whatsapp/plantilla/enviar', loadClinic, form, async
   } catch (err) {
     go(res, req.clinic, 'whatsapp', { error: `No se pudo enviar la plantilla: ${err.message}` });
   }
+});
+
+async function testReminderResult(clinic, phone) {
+  const r = await reminders.sendTestReminder(clinic, phone);
+  return r.ok ? { ok: `Recordatorio de prueba enviado (${r.via === 'plantilla' ? 'con la plantilla aprobada' : 'como mensaje normal'}): «${r.text}»` } : { error: r.error };
+}
+
+router.post('/onboarding/:id/recordatorio-prueba', loadClinic, form, async (req, res) => {
+  go(res, req.clinic, 'whatsapp', await testReminderResult(req.clinic, req.body.phone));
+});
+
+router.post('/onboarding/demo/recordatorio-prueba', form, async (req, res) => {
+  const q = new URLSearchParams(await testReminderResult(clinics.getDemoClinic(), req.body.phone)).toString();
+  res.redirect(`/onboarding/demo/whatsapp?${q}`);
 });
 
 router.post('/onboarding/:id/recordatorios', loadClinic, form, (req, res) => {
