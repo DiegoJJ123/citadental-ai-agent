@@ -604,9 +604,20 @@ router.get('/onboarding/demo/whatsapp', (req, res) => {
           <label>Número de la demo</label>
           <input type="tel" name="phone" required value="${esc(demo.whatsapp_phone || '+34 602 131 819')}">
           <div class="actions"><a class="btn sec" href="/onboarding">← Clínicas</a><button class="btn" type="submit">Pasar la demo a YCloud</button></div>
+        </form>
+        <h2>Panel de conversaciones (para enseñar a clínicas)</h2>
+        <p class="hint">Enlace privado al panel de la demo, igual al que recibe la recepción de una clínica. Quien lo tenga ve los chats de la demo.</p>
+        ${demo.panel_token ? `<input type="text" readonly value="${esc(`${publicBaseUrl(req)}/panel/t/${demo.panel_token}`)}" onclick="this.select()">` : ''}
+        <form method="post" action="/onboarding/demo/panel-token"${demo.panel_token ? ` onsubmit="return confirm('El enlace actual dejará de funcionar. ¿Crear uno nuevo?')"` : ''}>
+          <div class="actions" style="margin-top:10px"><a class="btn sec" href="/panel/c/${demo.id}" target="_blank">Ver conversaciones</a><button class="btn ${demo.panel_token ? 'sec' : ''}" type="submit">${demo.panel_token ? 'Crear enlace nuevo' : 'Crear enlace del panel'}</button></div>
         </form>`,
     })
   );
+});
+
+router.post('/onboarding/demo/panel-token', (req, res) => {
+  clinics.updateClinic(clinics.getDemoClinic().id, { panel_token: require('./panel').newPanelToken() });
+  res.redirect('/onboarding/demo/whatsapp?ok=' + encodeURIComponent('Enlace del panel creado.'));
 });
 
 router.post('/onboarding/demo/whatsapp', form, async (req, res) => {
