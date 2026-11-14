@@ -289,6 +289,34 @@ if (db.prepare('PRAGMA user_version').get().user_version < 4) {
   raw.exec('PRAGMA user_version = 4;');
 }
 
+// ---------------------------------------------------------------------------
+// v5: texto de la plantilla de recordatorio editable en el onboarding.
+// - reminder_template_text: texto con huecos {nombre} {clinica} {cita}
+// - reminder_template_params: orden de los huecos en la plantilla de Meta (JSON)
+// - reminder_hours: cuántos recordatorios y cuántas horas antes (JSON, p. ej.
+//   [48,24]); null = los de siempre (48 h y 24 h).
+// - reminders_sent: qué recordatorio (horas antes) se ha enviado de cada cita.
+//   Sustituye a appointments.reminder_48h_sent / reminder_24h_sent.
+// ---------------------------------------------------------------------------
+if (db.prepare('PRAGMA user_version').get().user_version < 5) {
+  db.transaction(() => {
+    db.exec(`
+    ALTER TABLE clinics ADD COLUMN reminder_template_text TEXT;
+    ALTER TABLE clinics ADD COLUMN reminder_template_params TEXT;
+    ALTER TABLE clinics ADD COLUMN reminder_hours TEXT;
+    CREATE TABLE reminders_sent (
+      appointment_id INTEGER NOT NULL,
+      hours INTEGER NOT NULL,
+      sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (appointment_id, hours)
+    );
+    INSERT INTO reminders_sent (appointment_id, hours) SELECT id, 48 FROM appointments WHERE reminder_48h_sent = 1;
+    INSERT INTO reminders_sent (appointment_id, hours) SELECT id, 24 FROM appointments WHERE reminder_24h_sent = 1;
+    `);
+  })();
+  raw.exec('PRAGMA user_version = 5;');
+}
+
 // La clínica demo responde por el número del entorno (WHATSAPP_PHONE_NUMBER_ID).
 if (process.env.WHATSAPP_PHONE_NUMBER_ID) {
   db.prepare('UPDATE clinics SET whatsapp_phone_number_id = ? WHERE id = ? AND whatsapp_phone_number_id IS NOT ?').run(

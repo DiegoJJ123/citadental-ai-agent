@@ -23,6 +23,9 @@ const UPDATABLE_FIELDS = [
   'reminder_template_name',
   'reminder_template_status',
   'panel_token',
+  'reminder_template_text',
+  'reminder_template_params',
+  'reminder_hours',
 ];
 
 function parseJson(text) {

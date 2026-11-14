@@ -1,7 +1,8 @@
-// Recordatorios de cita (48 h y 24 h antes). WhatsApp solo permite texto libre
-// si el paciente escribió en las últimas 24 h; si no, hay que usar la plantilla
-// aprobada de la clínica (templates.js). Sin plantilla aprobada no se envía y
-// queda registrado en error_log.
+// Recordatorios de cita. Cada clínica elige en el onboarding cuántos (hasta 3)
+// y cuántas horas antes de la cita (clinics.reminder_hours); por defecto 48 h
+// y 24 h. WhatsApp solo permite texto libre si el paciente escribió en las
+// últimas 24 h; si no, hay que usar la plantilla aprobada de la clínica
+// (templates.js). Sin plantilla aprobada no se envía y queda en error_log.
 const db = require('../db/db');
 const whatsapp = require('./whatsapp');
 const clinics = require('./clinics');
@@ -13,8 +14,32 @@ const CHECK_INTERVAL_MS = 15 * 60 * 1000; // cada 15 minutos
 // Margen de seguridad: se considera fuera de ventana a partir de 23 h.
 const WINDOW_MS = 23 * 60 * 60 * 1000;
 
+const DEFAULT_HOURS = [48, 24];
+const MAX_REMINDERS = 3;
+// Opciones que se ofrecen en el onboarding (horas antes de la cita).
+const HOUR_OPTIONS = [1, 2, 3, 6, 12, 24, 48, 72, 168];
+
 const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
 const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+function hoursLabel(h) {
+  if (h % 168 === 0) return h === 168 ? '1 semana antes' : `${h / 168} semanas antes`;
+  if (h % 24 === 0) return h === 24 ? '1 día antes (24 h)' : `${h / 24} días antes (${h} h)`;
+  return h === 1 ? '1 hora antes' : `${h} horas antes`;
+}
+
+// Horas antes de la cita en que se envía cada recordatorio, de mayor a menor.
+function reminderHours(clinic) {
+  try {
+    const v = JSON.parse(clinic?.reminder_hours || 'null');
+    if (Array.isArray(v)) {
+      return [...new Set(v.map(Number).filter((h) => Number.isInteger(h) && h >= 1 && h <= 336))].sort((a, b) => b - a).slice(0, MAX_REMINDERS);
+    }
+  } catch {
+    /* valor vacío o antiguo */
+  }
+  return DEFAULT_HOURS;
+}
 
 function slotDateTime(slot, tz = DEFAULT_TZ) {
   // date y time son hora local de la clínica; el servidor corre en UTC, así que
@@ -30,10 +55,10 @@ function formatSlotForReminder(slot, clinic) {
   return `${dias[weekday]} ${d} de ${meses[m - 1]} a las ${slot.time} (${t?.nombre || slot.treatment})`;
 }
 
-function getPendingAppointments() {
+function getUpcomingAppointments() {
   return db
     .prepare(
-      `SELECT a.id as appointment_id, a.clinic_id, a.reminder_48h_sent, a.reminder_24h_sent,
+      `SELECT a.id as appointment_id, a.clinic_id,
               p.phone, p.name as patient_name,
               s.date, s.time, s.treatment
        FROM appointments a
@@ -41,20 +66,33 @@ function getPendingAppointments() {
        JOIN slots s ON s.id = a.slot_id
        JOIN clinics c ON c.id = a.clinic_id
        WHERE a.status = 'confirmada' AND a.is_test = 0 AND c.status = 'activa'
-         AND s.date >= date('now', '-1 day')
-         AND (a.reminder_48h_sent = 0 OR a.reminder_24h_sent = 0)`
+         AND s.date >= date('now', '-1 day')`
     )
     .all();
 }
 
-function markReminderSent(appointmentId, column) {
-  db.prepare(`UPDATE appointments SET ${column} = 1 WHERE id = ?`).run(appointmentId);
+function wasSent(appointmentId, hours) {
+  return Boolean(db.prepare('SELECT 1 FROM reminders_sent WHERE appointment_id = ? AND hours = ?').get(appointmentId, hours));
 }
 
-function reminderMessage(appt, horas, clinic) {
-  const saludo = appt.patient_name ? `Hola ${appt.patient_name}` : 'Hola';
-  const cuando = horas === 48 ? 'en 2 días' : 'mañana';
-  return `${saludo} 👋 Te recordamos tu cita del ${formatSlotForReminder(appt, clinic)} (${cuando}). Si necesitas cambiarla o cancelarla, escríbenos por aquí mismo.`;
+function markReminderSent(appointmentId, hours) {
+  db.prepare('INSERT OR IGNORE INTO reminders_sent (appointment_id, hours) VALUES (?, ?)').run(appointmentId, hours);
+}
+
+function templateValues(appt, clinic) {
+  return {
+    nombre: appt.patient_name || 'de nuevo',
+    clinica: clinic?.info?.nombre || clinic?.name || '',
+    cita: formatSlotForReminder(appt, clinic),
+  };
+}
+
+// Texto libre (paciente dentro de la ventana de 24 h): el mismo texto que la
+// plantilla de la clínica, con los huecos rellenos.
+function reminderMessage(appt, clinic) {
+  const v = templateValues(appt, clinic);
+  if (!appt.patient_name) v.nombre = '';
+  return templates.render(clinic, v).replace(/Hola\s+(?=[👋,!.])/u, 'Hola ').replace(/\s{2,}/g, ' ').trim();
 }
 
 // ¿El paciente escribió a esta clínica hace menos de 23 h?
@@ -80,23 +118,24 @@ function logReminderError(appt, message) {
 // hay que darlo por gestionado (enviado, o imposible de enviar y registrado).
 async function sendReminder(appt, horas, clinic, now) {
   if (inServiceWindow(appt.clinic_id, appt.phone, now)) {
-    const text = reminderMessage(appt, horas, clinic);
+    const text = reminderMessage(appt, clinic);
     const ok = await whatsapp.sendText(appt.phone, text, clinic);
     if (ok) messages.log(appt.clinic_id, appt.phone, 'out', 'bot', text);
     return ok;
   }
   if (templates.isApproved(clinic?.reminder_template_status) && clinic.reminder_template_name) {
+    const values = templateValues(appt, clinic);
     try {
       await whatsapp.sendTemplate(
         appt.phone,
         {
           name: clinic.reminder_template_name,
           language: templates.LANGUAGE,
-          bodyParams: [appt.patient_name || 'de nuevo', clinic.info?.nombre || clinic.name, formatSlotForReminder(appt, clinic)],
+          bodyParams: templates.clinicParams(clinic).map((k) => values[k]),
         },
         clinic
       );
-      messages.log(appt.clinic_id, appt.phone, 'out', 'bot', `Recordatorio de cita (plantilla): ${formatSlotForReminder(appt, clinic)}`);
+      messages.log(appt.clinic_id, appt.phone, 'out', 'bot', templates.render(clinic, values));
       return true;
     } catch (err) {
       logReminderError(appt, `No se pudo enviar el recordatorio con plantilla: ${err.message}`);
@@ -111,22 +150,33 @@ async function sendReminder(appt, horas, clinic, now) {
   return true;
 }
 
+// Cada recordatorio tiene su tramo: el de 48 h se envía entre 48 h y 24 h
+// antes (si el siguiente es el de 24 h); el último, desde sus horas hasta la
+// cita. Si la cita se reserva tarde, solo sale el recordatorio del tramo en el
+// que estemos (no varios de golpe).
+function dueReminder(hoursList, hoursUntil) {
+  for (let i = 0; i < hoursList.length; i++) {
+    const upper = hoursList[i];
+    const lower = hoursList[i + 1] ?? 0;
+    if (hoursUntil <= upper && hoursUntil > lower) return upper;
+  }
+  return null;
+}
+
 async function checkAndSendReminders(now = Date.now()) {
-  const appointments = getPendingAppointments();
+  const appointments = getUpcomingAppointments();
+  const cache = new Map();
 
   for (const appt of appointments) {
-    const clinic = clinics.getClinicById(appt.clinic_id);
+    if (!cache.has(appt.clinic_id)) cache.set(appt.clinic_id, clinics.getClinicById(appt.clinic_id));
+    const clinic = cache.get(appt.clinic_id);
     const apptTime = slotDateTime(appt, clinic?.schedule?.timezone || DEFAULT_TZ).getTime();
     const hoursUntil = (apptTime - now) / (1000 * 60 * 60);
+    const due = dueReminder(reminderHours(clinic), hoursUntil);
+    if (due === null || wasSent(appt.appointment_id, due)) continue;
 
     try {
-      if (!appt.reminder_48h_sent && hoursUntil <= 48 && hoursUntil > 24) {
-        if (await sendReminder(appt, 48, clinic, now)) markReminderSent(appt.appointment_id, 'reminder_48h_sent');
-      }
-
-      if (!appt.reminder_24h_sent && hoursUntil <= 24 && hoursUntil > 0) {
-        if (await sendReminder(appt, 24, clinic, now)) markReminderSent(appt.appointment_id, 'reminder_24h_sent');
-      }
+      if (await sendReminder(appt, due, clinic, now)) markReminderSent(appt.appointment_id, due);
     } catch (err) {
       console.error(`Error enviando recordatorio para la cita ${appt.appointment_id}:`, err);
     }
@@ -140,4 +190,16 @@ function startReminderScheduler() {
   }, CHECK_INTERVAL_MS);
 }
 
-module.exports = { startReminderScheduler, checkAndSendReminders, inServiceWindow, formatSlotForReminder };
+module.exports = {
+  startReminderScheduler,
+  checkAndSendReminders,
+  inServiceWindow,
+  formatSlotForReminder,
+  reminderHours,
+  dueReminder,
+  hoursLabel,
+  reminderMessage,
+  DEFAULT_HOURS,
+  HOUR_OPTIONS,
+  MAX_REMINDERS,
+};

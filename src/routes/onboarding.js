@@ -13,6 +13,7 @@ const gcal = require('../services/googleCalendar');
 const { INFO_FIELDS, extractClinicInfo } = require('../services/siteExtractor');
 const { handleIncomingMessage } = require('../services/agent');
 const ycloud = require('../services/ycloud');
+const reminders = require('../services/reminders');
 const templates = require('../services/templates');
 
 const router = express.Router();
@@ -471,6 +472,53 @@ async function ensureYCloudWebhook(req) {
   return 'creado';
 }
 
+// Paso 5 (con número conectado): recordatorios y texto de la plantilla.
+function reminderSection(clinic) {
+  const tplStatus = clinic.reminder_template_status;
+  const hours = reminders.reminderHours(clinic);
+  const select = (i) => {
+    const cur = hours[i];
+    const opts = [`<option value="">${i === 0 ? 'Sin recordatorios' : 'No enviar'}</option>`]
+      .concat(reminders.HOUR_OPTIONS.map((h) => `<option value="${h}"${h === cur ? ' selected' : ''}>${esc(reminders.hoursLabel(h))}</option>`))
+      .join('');
+    return `<div><label style="margin-top:8px">Recordatorio ${i + 1}</label><select name="h${i}">${opts}</select></div>`;
+  };
+  const text = templates.clinicText(clinic);
+  const tokens = Object.entries(templates.TOKENS)
+    .map(([k, t]) => `<button type="button" class="btn sec tok" data-tok="{${k}}" style="padding:5px 12px;font-size:13px">{${k}} <span class="hint">${esc(t.label)}</span></button>`)
+    .join(' ');
+  const examples = JSON.stringify(Object.fromEntries(Object.entries(templates.TOKENS).map(([k, t]) => [k, t.example]))).replace(/</g, '\\u003c');
+  const sentText = clinic.reminder_template_name ? clinic.reminder_template_text || templates.DEFAULT_TEXT : null;
+  return `<h2>Recordatorios de cita</h2>
+    <p class="hint">Elige cuántos recordatorios recibe cada paciente y cuánto antes de su cita (máximo ${reminders.MAX_REMINDERS}).</p>
+    <form method="post" action="/onboarding/${clinic.id}/recordatorios">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0 14px">${[0, 1, 2].map(select).join('')}</div>
+      <div class="actions" style="margin-top:12px"><span class="hint">Ahora: ${hours.length ? esc(hours.map(reminders.hoursLabel).join(' · ')) : 'sin recordatorios'}</span><button class="btn sec" type="submit">Guardar recordatorios</button></div>
+    </form>
+    <h2>Texto del recordatorio</h2>
+    <p class="hint">Para escribir a un paciente que no ha hablado con la clínica en las últimas 24 h, WhatsApp exige una plantilla <strong>aprobada por Meta</strong>. Revisa el texto y envíalo a aprobación. Usa los huecos (pulsa para insertarlos); se rellenan solos en cada recordatorio.</p>
+    ${
+      clinic.reminder_template_name
+        ? `<div class="${templates.isApproved(tplStatus) ? 'ok' : tplStatus === 'REJECTED' ? 'err' : 'info'}">Plantilla enviada (<small class="mono">${esc(clinic.reminder_template_name)}</small>): <strong>${esc(TEMPLATE_LABEL[tplStatus] || tplStatus || 'sin estado')}</strong>
+           ${tplStatus === 'REJECTED' ? '<br>Meta la ha rechazado: cambia el texto y vuelve a enviarla (mira el motivo en YCloud → Templates).' : ''}
+           <form method="post" action="/onboarding/${clinic.id}/whatsapp/plantilla" style="display:inline;margin-left:8px"><button class="btn sec" type="submit" style="padding:5px 12px;font-size:13px">Actualizar estado</button></form></div>`
+        : '<div class="info">Todavía no se ha enviado a Meta.</div>'
+    }
+    <form method="post" action="/onboarding/${clinic.id}/whatsapp/plantilla/enviar" data-busy="Enviando a Meta…" ${clinic.reminder_template_name ? `onsubmit="return document.getElementById('tpltext').value.trim()===${esc(JSON.stringify(sentText || ''))}.trim() ? (alert('Es el mismo texto que ya se envió. Cámbialo o pulsa «Actualizar estado».'), false) : confirm('Se enviará como plantilla nueva. Mientras Meta la revisa, los recordatorios solo llegarán a quien escribió en las últimas 24 h. ¿Continuar?')"` : ''}>
+      <div style="margin:6px 0">${tokens}</div>
+      <textarea id="tpltext" name="text" maxlength="${templates.MAX_LEN}" style="min-height:110px">${esc(text)}</textarea>
+      <label>Vista previa</label>
+      <div id="tplprev" class="msg bot" style="max-width:100%;background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px 14px;white-space:pre-wrap"></div>
+      <div class="actions"><button type="button" class="btn sec" onclick="document.getElementById('tpltext').value=${esc(JSON.stringify(templates.DEFAULT_TEXT))};upd()">Restaurar texto por defecto</button><button class="btn" type="submit">Enviar a Meta para aprobación</button></div>
+    </form>
+    <script>(function(){const ex=${examples};const ta=document.getElementById('tpltext');const pv=document.getElementById('tplprev');
+      window.upd=function(){pv.textContent=ta.value.replace(/\\{([a-z]+)\\}/g,(m,k)=>ex[k]||m);};ta.addEventListener('input',upd);upd();
+      document.querySelectorAll('.tok').forEach(b=>b.addEventListener('click',()=>{const t=b.dataset.tok,s=ta.selectionStart,e=ta.selectionEnd;ta.value=ta.value.slice(0,s)+t+ta.value.slice(e);ta.focus();ta.selectionStart=ta.selectionEnd=s+t.length;upd();}));})();</script>
+    <div class="actions" style="border-top:1px solid var(--border);padding-top:18px">
+      <span class="hint">${clinic.reminder_template_name ? 'Puedes seguir mientras Meta revisa la plantilla.' : 'Puedes enviar la plantilla ahora o más tarde.'}</span>
+      <a class="btn green" href="/onboarding/${clinic.id}/recepcion">Continuar: avisos a recepción →</a></div>`;
+}
+
 const TEMPLATE_LABEL = {
   APPROVED: '✅ Aprobada',
   PENDING: '⏳ En revisión por Meta (suele tardar de minutos a unas horas)',
@@ -494,11 +542,7 @@ router.get('/onboarding/:id/whatsapp', loadClinic, (req, res) => {
         ${connected ? `<div class="ok">✓ Número conectado: <strong>${esc(clinic.whatsapp_display_phone || clinic.whatsapp_phone)}</strong></div>` : ''}
         ${
           connected
-            ? `<h2>Plantilla de recordatorio de citas</h2>
-               <p class="hint">WhatsApp exige una plantilla aprobada para recordar la cita a pacientes que no han escrito en las últimas 24 h.</p>
-               <div class="${templates.isApproved(tplStatus) ? 'ok' : 'info'}">Estado: <strong>${esc(TEMPLATE_LABEL[tplStatus] || tplStatus || 'sin crear')}</strong>
-               ${tplStatus === 'REJECTED' ? ' — revisa el motivo en YCloud (Plantillas).' : ''}</div>
-               <form method="post" action="/onboarding/${clinic.id}/whatsapp/plantilla" style="display:inline"><button class="btn sec" type="submit">${tplStatus ? 'Actualizar estado' : 'Crear plantilla'}</button></form>`
+            ? reminderSection(clinic)
             : ''
         }
         <h2>${connected ? 'Cambiar de número' : 'Cómo conectarlo'}</h2>
@@ -553,7 +597,7 @@ router.get('/onboarding/:id/whatsapp', loadClinic, (req, res) => {
 
 // Conecta una clínica (o la demo) a su número en YCloud. Devuelve
 // { ok: mensaje } o { error: mensaje }.
-async function connectYCloud(req, clinic, rawPhone, extra = {}) {
+async function connectYCloud(req, clinic, rawPhone, extra = {}, { autoTemplate = false } = {}) {
   const phone = clinics.toE164(rawPhone);
   if (!phone || phone.length < 10) return { error: 'Escribe el número completo con prefijo (p. ej. +34 600 11 22 33).' };
   const other = clinics.getClinicByWhatsappPhone(phone);
@@ -585,8 +629,8 @@ async function connectYCloud(req, clinic, rawPhone, extra = {}) {
     ...extra,
   });
 
-  let tplMsg = '';
-  try {
+  let tplMsg = autoTemplate ? '' : ' Revisa abajo los recordatorios y el texto de la plantilla y envíalo a Meta.';
+  if (autoTemplate) try {
     const t = await templates.ensureReminderTemplate(updated);
     tplMsg = templates.isApproved(t.status) ? ' Plantilla de recordatorio aprobada.' : ' Plantilla de recordatorio enviada a Meta para su aprobación.';
   } catch (err) {
@@ -596,7 +640,7 @@ async function connectYCloud(req, clinic, rawPhone, extra = {}) {
 }
 
 router.post('/onboarding/:id/whatsapp', loadClinic, form, async (req, res) => {
-  const r = await connectYCloud(req, req.clinic, req.body.phone, { onboarding_step: 'recepcion' });
+  const r = await connectYCloud(req, req.clinic, req.body.phone, { onboarding_step: 'whatsapp' });
   if (r.error) return go(res, req.clinic, 'whatsapp', { error: r.error });
   go(res, req.clinic, nextStep('whatsapp'), { ok: r.ok });
 });
@@ -635,16 +679,33 @@ router.post('/onboarding/demo/panel-token', (req, res) => {
 });
 
 router.post('/onboarding/demo/whatsapp', form, async (req, res) => {
-  const r = await connectYCloud(req, clinics.getDemoClinic(), req.body.phone);
+  const r = await connectYCloud(req, clinics.getDemoClinic(), req.body.phone, {}, { autoTemplate: true });
   const q = new URLSearchParams(r.error ? { error: r.error } : { ok: r.ok }).toString();
   res.redirect(`/onboarding/demo/whatsapp?${q}`);
 });
 
+router.post('/onboarding/:id/whatsapp/plantilla/enviar', loadClinic, form, async (req, res) => {
+  try {
+    const t = await templates.submitReminderTemplate(req.clinic, req.body.text);
+    go(res, req.clinic, 'whatsapp', { ok: `Plantilla enviada a Meta (${t.name}): ${TEMPLATE_LABEL[t.status] || t.status}` });
+  } catch (err) {
+    go(res, req.clinic, 'whatsapp', { error: `No se pudo enviar la plantilla: ${err.message}` });
+  }
+});
+
+router.post('/onboarding/:id/recordatorios', loadClinic, form, (req, res) => {
+  const hours = [req.body.h0, req.body.h1, req.body.h2].map(Number).filter((h) => reminders.HOUR_OPTIONS.includes(h));
+  const unique = [...new Set(hours)].sort((a, b) => b - a);
+  clinics.updateClinic(req.clinic.id, { reminder_hours: JSON.stringify(unique) });
+  go(res, req.clinic, 'whatsapp', {
+    ok: unique.length ? `Recordatorios guardados: ${unique.map(reminders.hoursLabel).join(' · ')}.` : 'Recordatorios desactivados: no se enviará ninguno.',
+  });
+});
+
 router.post('/onboarding/:id/whatsapp/plantilla', loadClinic, async (req, res) => {
   try {
-    const t = req.clinic.reminder_template_name
-      ? { status: await templates.refreshStatus(req.clinic) }
-      : await templates.ensureReminderTemplate(req.clinic);
+    if (!req.clinic.reminder_template_name) return go(res, req.clinic, 'whatsapp', { error: 'Primero envía el texto de la plantilla a Meta.' });
+    const t = { status: await templates.refreshStatus(req.clinic) };
     go(res, req.clinic, 'whatsapp', { ok: `Plantilla de recordatorio: ${TEMPLATE_LABEL[t.status] || t.status}` });
   } catch (err) {
     go(res, req.clinic, 'whatsapp', { error: `Plantilla de recordatorio: ${err.message}` });
