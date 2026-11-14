@@ -46,8 +46,16 @@ function claimMessage(wamid) {
 async function processIncoming({ clinic, from, message, contactName, context, channel, wamid }) {
   let replied = false;
   try {
-    if (!clinics.isServing(clinic)) return; // clínica en onboarding o pausada: el bot no responde
     if (!claimMessage(wamid)) return; // ya atendido por la otra vía
+    if (!clinics.isServing(clinic)) {
+      // Clínica en onboarding o pausada: el bot no responde, pero el mensaje
+      // queda en el panel para ver que llega (y que nadie se quede sin leer).
+      const note = `Sin respuesta automática: la clínica está «${clinic.status}» (el asistente solo responde con la clínica activa)`;
+      const prev = db.prepare("SELECT body FROM messages WHERE clinic_id = ? AND phone = ? AND author = 'system' ORDER BY id DESC LIMIT 1").get(clinic.id, from);
+      messages.log(clinic.id, from, 'in', 'patient', extractIncomingText(message) ?? `[${message.type}]`);
+      if (prev?.body !== note) messages.log(clinic.id, from, 'out', 'system', note);
+      return;
+    }
 
     db.prepare('INSERT INTO message_log (clinic_id, phone) VALUES (?, ?)').run(clinic.id, from);
 

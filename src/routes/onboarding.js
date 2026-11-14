@@ -490,7 +490,7 @@ router.get('/onboarding/:id/whatsapp', loadClinic, (req, res) => {
       clinic,
       step: 'whatsapp',
       body: `<h1>5. Conectar WhatsApp</h1>
-        <p class="sub">El número se conecta a través de <strong>YCloud</strong> en modo coexistencia: la clínica sigue usando su app de WhatsApp Business de siempre y el asistente responde por el mismo número.</p>
+        <p class="sub">El número de la clínica se conecta a través de <strong>YCloud</strong> y el asistente responde por ese mismo número. Si la clínica solo usa la app de WhatsApp Business, se hace en <strong>coexistencia</strong> (sigue usando su app); si ya está en otro programa, se <strong>migra</strong>.</p>
         ${connected ? `<div class="ok">✓ Número conectado: <strong>${esc(clinic.whatsapp_display_phone || clinic.whatsapp_phone)}</strong></div>` : ''}
         ${
           connected
@@ -668,7 +668,7 @@ router.get('/onboarding/:id/recepcion', loadClinic, (req, res) => {
           <input type="tel" name="reception_phone" value="${esc(clinic.reception_phone || '')}" placeholder="34600111222">
           <label>Email de recepción <span class="hint">(opcional)</span></label>
           <input type="email" name="reception_email" value="${esc(clinic.reception_email || '')}" placeholder="recepcion@clinica.es">
-          <div class="info" style="margin-top:14px">Recepción también puede seguir la conversación directamente desde la app de WhatsApp Business de la clínica.</div>
+          <div class="info" style="margin-top:14px">Recepción puede seguir todas las conversaciones, pausar el asistente y responder desde el <strong>panel de conversaciones</strong> (enlace privado en el paso 8). Si la clínica conectó el número en coexistencia, también desde su app de WhatsApp Business.</div>
           ${stepActions(clinic, 'recepcion')}
         </form>`,
     })
