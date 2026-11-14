@@ -1,0 +1,58 @@
+// Aplicación (la arranca src/server.js después de preparar la base de datos).
+const express = require('express');
+const webhookRouter = require('./routes/webhook');
+const dashboardRouter = require('./routes/dashboard');
+const productMetricsRouter = require('./routes/productMetrics');
+const onboardingRouter = require('./routes/onboarding');
+const panelRouter = require('./routes/panel');
+const { startReminderScheduler } = require('./services/reminders');
+const { startHealthScheduler } = require('./services/health');
+const { ensureDemoSlots } = require('./db/seed');
+
+const app = express();
+app.set('trust proxy', 1); // Render está detrás de un proxy; necesario para que req.protocol sea 'https'
+// rawBody: la firma de los webhooks de YCloud se calcula sobre los bytes exactos.
+app.use(express.json({ limit: '1mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
+app.use('/brand', express.static(require('path').join(__dirname, '..', 'public', 'brand'), { maxAge: '7d' }));
+app.use('/generated', express.static(require('path').join(__dirname, '..', 'public', 'generated')));
+
+// Copia de la BD para mover el bot a otro servidor (ver src/db/bootstrap.js).
+// Solo existe si MIGRATION_TOKEN está definido; protegido con ese token.
+app.get('/internal/backup', (req, res) => {
+  const token = process.env.MIGRATION_TOKEN || '';
+  const given = String(req.get('X-Migration-Token') || '');
+  const crypto = require('crypto');
+  const ok = token.length >= 32 && given.length === token.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(token));
+  if (!ok) return res.status(404).end();
+  res.set({ 'Content-Type': 'application/gzip', 'Cache-Control': 'no-store' }).send(require('./services/backup').freshBackupBuffer());
+});
+
+app.get('/health', (req, res) => res.json({ ok: true, model: require('./services/agent').MODEL }));
+
+app.use('/', webhookRouter);
+app.use('/', dashboardRouter);
+app.use('/', productMetricsRouter);
+app.use('/', onboardingRouter);
+app.use('/', panelRouter);
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`CitaDental AI bot escuchando en el puerto ${PORT}`);
+  // SCHEDULERS_OFF=1: servidor nuevo aún sin dominio (no duplicar recordatorios ni avisos).
+  if (process.env.SCHEDULERS_OFF) {
+    console.log('Tareas automáticas desactivadas (SCHEDULERS_OFF)');
+    return;
+  }
+  startReminderScheduler();
+  startHealthScheduler();
+  const seedDemo = () => {
+    try {
+      const { added } = ensureDemoSlots();
+      if (added) console.log(`Agenda demo: ${added} huecos nuevos`);
+    } catch (err) {
+      console.error('Error rellenando la agenda demo:', err);
+    }
+  };
+  seedDemo();
+  setInterval(seedDemo, 24 * 60 * 60 * 1000);
+});
