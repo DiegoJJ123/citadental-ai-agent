@@ -1,6 +1,6 @@
 # CitaDental AI — bot de WhatsApp (demo)
 
-Asistente de IA que hace de recepción de una clínica dental ficticia por WhatsApp, para demostrar el producto "CitaDental AI" a clientes potenciales. Responde por el número **+34 642 06 90 50**.
+Asistente de IA que hace de recepción de una clínica dental ficticia por WhatsApp, para demostrar el producto "CitaDental AI" a clientes potenciales. Responde por el número **+34 602 131 819**.
 
 ## Qué hace
 

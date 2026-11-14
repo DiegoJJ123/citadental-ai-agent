@@ -582,7 +582,7 @@ router.get('/onboarding/demo/whatsapp', (req, res) => {
         <p class="sub">Conecta primero el número de la demo en la consola de YCloud (coexistencia, escaneando el QR con el móvil de ese número). Después escríbelo aquí.</p>
         <form method="post" data-busy="Comprobando con YCloud…">
           <label>Número de la demo</label>
-          <input type="tel" name="phone" required value="${esc(demo.whatsapp_phone || '+34 642 06 90 50')}">
+          <input type="tel" name="phone" required value="${esc(demo.whatsapp_phone || '+34 602 131 819')}">
           <div class="actions"><a class="btn sec" href="/onboarding">← Clínicas</a><button class="btn" type="submit">Pasar la demo a YCloud</button></div>
         </form>`,
     })
