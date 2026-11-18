@@ -28,7 +28,7 @@ function getTransport() {
 }
 
 // Devuelve true si se envió. Nunca lanza: un fallo de email no debe tumbar nada.
-async function send({ subject, text, html, attachments }) {
+async function send({ subject, text, html, attachments, to, replyTo }) {
   if (!isConfigured()) {
     console.warn(`[email sin configurar] ${subject}`);
     return false;
@@ -36,7 +36,8 @@ async function send({ subject, text, html, attachments }) {
   try {
     await getTransport().sendMail({
       from: `"CitaDental AI" <${CONFIG.user}>`,
-      to: CONFIG.to,
+      to: to || CONFIG.to,
+      replyTo,
       subject,
       text,
       html,

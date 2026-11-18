@@ -172,6 +172,7 @@ function startHealthScheduler() {
   const tick = async () => {
     try {
       await runChecks();
+      await require('./usage').checkUsageAlerts();
     } catch (err) {
       console.error('Error en la vigilancia:', err);
     }

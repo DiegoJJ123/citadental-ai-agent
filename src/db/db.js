@@ -317,6 +317,31 @@ if (db.prepare('PRAGMA user_version').get().user_version < 5) {
   raw.exec('PRAGMA user_version = 5;');
 }
 
+// ---------------------------------------------------------------------------
+// v6: panel de la clínica con citas y leads, y planes.
+// - clinics.plan: 'clinica' (hasta 500 conversaciones/mes) | 'clinica_plus'
+// - leads: datos de seguimiento que la recepción gestiona por paciente
+//   (estado, email, notas). La lista sale de quien ha escrito; esto solo
+//   guarda lo que la recepción añade.
+// ---------------------------------------------------------------------------
+if (db.prepare('PRAGMA user_version').get().user_version < 6) {
+  db.transaction(() => {
+    db.exec(`
+    ALTER TABLE clinics ADD COLUMN plan TEXT NOT NULL DEFAULT 'clinica';
+    CREATE TABLE leads (
+      clinic_id INTEGER NOT NULL,
+      phone TEXT NOT NULL,
+      status TEXT,                -- null = automático (según si reservó)
+      email TEXT,
+      notes TEXT,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (clinic_id, phone)
+    );
+    `);
+  })();
+  raw.exec('PRAGMA user_version = 6;');
+}
+
 // La clínica demo responde por el número del entorno (WHATSAPP_PHONE_NUMBER_ID).
 if (process.env.WHATSAPP_PHONE_NUMBER_ID) {
   db.prepare('UPDATE clinics SET whatsapp_phone_number_id = ? WHERE id = ? AND whatsapp_phone_number_id IS NOT ?').run(

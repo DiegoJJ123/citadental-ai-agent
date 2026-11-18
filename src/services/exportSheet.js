@@ -54,12 +54,19 @@ function sheets() {
     };
   });
 
-  const patients = db.prepare('SELECT * FROM patients ORDER BY clinic_id, id').all().map((p) => ({
-    Clínica: cname(p.clinic_id),
-    Nombre: p.name || '',
-    Teléfono: `+${String(p.phone).replace(/^\+/, '')}`,
-    'Primer contacto': fmtTs(p.created_at),
-  }));
+  const LEAD = { nuevo: 'Nuevo', contactado: 'Contactado', cita: 'Cita reservada', perdido: 'Perdido' };
+  const patients = db
+    .prepare('SELECT p.*, l.status AS lead_status, l.email AS lead_email, l.notes AS lead_notes FROM patients p LEFT JOIN leads l ON l.clinic_id = p.clinic_id AND l.phone = p.phone ORDER BY p.clinic_id, p.id')
+    .all()
+    .map((p) => ({
+      Clínica: cname(p.clinic_id),
+      Nombre: p.name || '',
+      Teléfono: `+${String(p.phone).replace(/^\+/, '')}`,
+      Email: p.lead_email || '',
+      Estado: LEAD[p.lead_status] || 'Automático',
+      Notas: p.lead_notes || '',
+      'Primer contacto': fmtTs(p.created_at),
+    }));
 
   const appointments = db
     .prepare(

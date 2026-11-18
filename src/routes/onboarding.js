@@ -15,6 +15,7 @@ const { handleIncomingMessage } = require('../services/agent');
 const ycloud = require('../services/ycloud');
 const reminders = require('../services/reminders');
 const health = require('../services/health');
+const usage = require('../services/usage');
 const backup = require('../services/backup');
 const mailer = require('../services/mailer');
 const templates = require('../services/templates');
@@ -174,7 +175,6 @@ router.use('/onboarding', auth.requireDashboardAuth);
 // ---------------------------------------------------------------------------
 router.get('/onboarding', (req, res) => {
   const list = clinics.listClinics().filter((c) => !c.isDemo);
-  const monthCount = db.prepare("SELECT COUNT(*) n FROM message_log WHERE clinic_id = ? AND created_at >= date('now','start of month')");
   const rows = list
     .map((c) => {
       const pending = STEPS.find((s) => !stepDone(c, s.key));
@@ -182,7 +182,7 @@ router.get('/onboarding', (req, res) => {
         <td><strong>${esc(c.name)}</strong><br><small class="mono">${esc(c.website || '')}</small></td>
         <td><span class="badge b-${esc(c.status)}">${esc(c.status)}</span></td>
         <td>${esc(c.whatsapp_display_phone || '—')}</td>
-        <td>${monthCount.get(c.id).n}</td>
+        <td style="white-space:nowrap">${(() => { const u = usage.usageOf(c); return `<strong${u.pct !== null && u.pct >= 80 ? ' style="color:#A34E12"' : ''}>${esc(usage.usageLabel(u))}</strong><br><small class="hint">${esc(u.plan.label)}</small>`; })()}</td>
         <td>${pending ? `Pendiente: ${esc(pending.title)}` : !realMessageReceived(c) ? '<span style="color:#A34E12;font-weight:600">⚠️ No ha llegado ningún mensaje al número</span>' : '✓ Completo'}</td>
         <td style="text-align:right;white-space:nowrap"><a class="btn sec" href="/panel/c/${c.id}">Conversaciones</a> <a class="btn sec" href="/onboarding/${c.id}/${pending ? pending.key : 'activar'}">${c.status === 'activa' ? 'Gestionar' : 'Continuar'}</a>
           ${deleteForm(c, { compact: true })}</td>
@@ -194,7 +194,7 @@ router.get('/onboarding', (req, res) => {
       title: 'Clínicas',
       body: `${healthBanner()}<div class="actions" style="margin-top:0"><div class="hello"><img src="${brand.MASCOT_URL}" alt="" class="float"><div><span class="eyebrow"><i></i>Panel de CitaDental AI</span><h1 style="margin-top:8px">Tus <span class="text-gradient">clínicas</span></h1><p class="sub" style="margin:0">${list.length ? `${list.length} clínica${list.length === 1 ? '' : 's'} · ${list.filter((c) => c.status === 'activa').length} activa${list.filter((c) => c.status === 'activa').length === 1 ? '' : 's'}. Da de alta una nueva o continúa un alta a medias.` : 'Da de alta tu primera clínica.'}</p></div></div>
         <span><a class="btn sec" href="/panel/c/1">Conversaciones demo</a> <a class="btn sec" href="/onboarding/demo/whatsapp">WhatsApp de la demo</a> <a class="btn" href="/onboarding/nueva">+ Nueva clínica</a></span></div>
-        ${list.length ? `<div style="overflow-x:auto;margin-top:18px"><table><thead><tr><th>Clínica</th><th>Estado</th><th>WhatsApp</th><th>Mensajes este mes</th><th>Progreso</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div style="padding:30px 0">${brand.mascot('Todavía no hay clínicas. Pulsa <b>«+ Nueva clínica»</b> y te guío paso a paso.', { size: 120 })}</div>`}`,
+        ${list.length ? `<div style="overflow-x:auto;margin-top:18px"><table><thead><tr><th>Clínica</th><th>Estado</th><th>WhatsApp</th><th>Conversaciones (mes)</th><th>Progreso</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div style="padding:30px 0">${brand.mascot('Todavía no hay clínicas. Pulsa <b>«+ Nueva clínica»</b> y te guío paso a paso.', { size: 120 })}</div>`}`,
     })
   );
 });
@@ -1031,8 +1031,19 @@ router.get('/onboarding/:id/activar', loadClinic, async (req, res) => {
             }
           </div>
         </form>
+        <h2>Plan de la clínica</h2>
+        ${(() => {
+          const u = usage.usageOf(clinic);
+          return `<p class="hint">Este mes: <strong>${esc(usage.usageLabel(u))}</strong> conversaciones${u.pct !== null ? ` (${u.pct} %)` : ''}. Una conversación es un paciente que escribe, durante 24 h. Al llegar al 80 % y al 100 % te avisamos por email; el asistente nunca se corta.</p>
+          <form method="post" action="/onboarding/${clinic.id}/plan" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <select name="plan" style="max-width:340px">${Object.entries(usage.PLANS)
+              .map(([k, v]) => `<option value="${k}"${(clinic.plan || 'clinica') === k ? ' selected' : ''}>${esc(v.label)} · ${esc(v.price)} · ${v.limit ? `hasta ${v.limit} conversaciones/mes` : 'conversaciones ilimitadas'}</option>`)
+              .join('')}</select>
+            <button class="btn sec" type="submit">Guardar plan</button>
+          </form>`;
+        })()}
         <h2>Panel de la recepción</h2>
-        <p class="hint">Enlace privado para que la recepción vea las conversaciones del asistente, lo pause o reactive en un chat y responda desde la web. Quien tenga el enlace puede entrar: compártelo solo con la clínica.</p>
+        <p class="hint">Enlace privado para que la recepción vea las conversaciones, las citas que ha reservado el asistente y sus pacientes (con estado, email y notas), pause o reactive el asistente en un chat y responda desde la web. Quien tenga el enlace puede entrar: compártelo solo con la clínica.</p>
         ${
           clinic.panel_token
             ? `<input type="text" readonly value="${esc(`${publicBaseUrl(req)}/panel/${clinic.panel_token}`)}" onclick="this.select()">
@@ -1054,6 +1065,12 @@ function realMessageReceived(clinic) {
     db.prepare("SELECT 1 FROM messages WHERE clinic_id = ? AND direction = 'in' AND phone NOT LIKE 'prueba-%' LIMIT 1").get(clinic.id)
   );
 }
+
+router.post('/onboarding/:id/plan', loadClinic, form, (req, res) => {
+  const plan = usage.PLANS[req.body.plan] ? req.body.plan : 'clinica';
+  const clinic = clinics.updateClinic(req.clinic.id, { plan });
+  go(res, clinic, 'activar', { ok: `Plan guardado: ${usage.PLANS[plan].label}.` });
+});
 
 router.post('/onboarding/:id/panel-token', loadClinic, (req, res) => {
   const clinic = clinics.updateClinic(req.clinic.id, { panel_token: require('./panel').newPanelToken(req.clinic) });
@@ -1080,7 +1097,7 @@ router.post('/onboarding/:id/eliminar', loadClinic, form, async (req, res) => {
   }
   db.transaction(() => {
     db.prepare('DELETE FROM reminders_sent WHERE appointment_id IN (SELECT id FROM appointments WHERE clinic_id = ?)').run(clinic.id);
-    for (const t of ['appointments', 'slots', 'conversations', 'patients', 'message_log', 'error_log', 'demo_leads', 'messages']) {
+    for (const t of ['appointments', 'slots', 'conversations', 'patients', 'message_log', 'error_log', 'demo_leads', 'messages', 'leads']) {
       db.prepare(`DELETE FROM ${t} WHERE clinic_id = ?`).run(clinic.id);
     }
     db.prepare('DELETE FROM clinics WHERE id = ? AND mode = ?').run(clinic.id, 'clinica');

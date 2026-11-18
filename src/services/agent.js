@@ -241,6 +241,11 @@ El asistente ha dejado de responder en ese chat.`;
           console.error('Error avisando a recepción de la escalada:', err)
         );
       }
+      if (!clinicRec.isDemo && clinicRec.reception_email && !opts.isTest) {
+        require('./escalation')
+          .emailReception(clinicRec, phone, input.motivo)
+          .catch((err) => console.error('Error enviando el email de escalada:', err));
+      }
       return { ok: true };
     }
     default:

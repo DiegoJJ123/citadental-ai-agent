@@ -96,6 +96,24 @@ async function deleteEvent(clinic, eventId) {
   await call(clinic, 'DELETE', `/calendars/${calendarId(clinic)}/events/${encodeURIComponent(eventId)}`);
 }
 
+// Eventos (id → inicio en ms) entre dos instantes, para comparar las citas
+// del asistente con lo que hay de verdad en el calendario de la clínica.
+async function listEventStarts(clinic, from, to) {
+  const out = new Map();
+  let pageToken;
+  do {
+    const data = await call(clinic, 'GET', `/calendars/${calendarId(clinic)}/events`, {
+      query: { timeMin: from.toISOString(), timeMax: to.toISOString(), singleEvents: 'true', maxResults: '2500', pageToken },
+    });
+    for (const ev of data.items || []) {
+      if (ev.status === 'cancelled') continue;
+      out.set(ev.id, ev.start?.dateTime ? Date.parse(ev.start.dateTime) : null);
+    }
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return out;
+}
+
 // Comprobación rápida para el onboarding: ¿la conexión funciona?
 async function ping(clinic) {
   const now = new Date();
@@ -103,4 +121,4 @@ async function ping(clinic) {
   return true;
 }
 
-module.exports = { listBusy, createEvent, deleteEvent, ping };
+module.exports = { listBusy, listEventStarts, createEvent, deleteEvent, ping };

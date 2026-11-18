@@ -26,6 +26,7 @@ const UPDATABLE_FIELDS = [
   'reminder_template_text',
   'reminder_template_params',
   'reminder_hours',
+  'plan',
 ];
 
 function parseJson(text) {
