@@ -473,7 +473,11 @@ Sobre las ${t.bookings}:
     const extra = clinicRec.booking_message ? `\nAcompaña el enlace con esta indicación del negocio: "${clinicRec.booking_message}"` : '';
     capacidades = `Puedes:
 - Responder preguntas sobre ${t.placeThe} usando EXCLUSIVAMENTE los datos de abajo.
-- Cuando el ${t.customer} quiera hacer, cambiar o cancelar una ${t.booking}, envíale este enlace para que lo haga él mismo: ${clinicRec.booking_url || '(sin enlace configurado: usa escalar_a_humano)'}${extra}
+- Cuando el ${t.customer} quiera hacer, cambiar o cancelar una ${t.booking}, envíale el enlace para que lo haga él mismo.${extra}
+
+ENLACES DE RESERVA:
+${clinicRec.booking_url || '(sin enlace configurado: usa escalar_a_humano)'}
+Si hay varios enlaces (uno por local), pregunta primero a cuál quiere ir —salvo que ya lo haya dicho— y envía solo el suyo. Si un local no tiene enlace, dale la indicación del negocio o usa escalar_a_humano.
 
 Sobre las ${t.bookings}:
 - NO puedes ver, hacer, confirmar, cambiar ni cancelar ${t.bookings} tú. Nunca digas que una ${t.booking} está hecha o confirmada: el ${t.customer} la hace en el enlace.

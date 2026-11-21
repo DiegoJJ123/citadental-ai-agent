@@ -468,8 +468,8 @@ router.get('/onboarding/:id/agenda', loadClinic, (req, res) => {
             .join('')}
           <div id="mode-link" class="mode-box">
             <h2>Enlace de reservas</h2>
-            <label>Enlace donde el ${esc(bt.customer)} hace su ${esc(bt.booking)} <span class="hint">(Restoo, Doctoralia, TheFork, Calendly, su web…)</span></label>
-            <input type="url" name="booking_url" value="${esc(clinic.booking_url || '')}" placeholder="https://…">
+            <label>Enlace donde el ${esc(bt.customer)} hace su ${esc(bt.booking)} <span class="hint">(Restoo, Doctoralia, TheFork, Calendly, su web…). Si el mismo WhatsApp atiende a varios locales, pon uno por línea con su nombre.</span></label>
+            <textarea name="booking_url" maxlength="1000" style="min-height:70px" placeholder="https://…&#10;o, si son varios locales:&#10;Nabrasa: https://nabrasa.myrestoo.net/&#10;O Patrón: https://…">${esc(clinic.booking_url || '')}</textarea>
             <label>Frase que acompaña al enlace <span class="hint">(opcional)</span></label>
             <input type="text" name="booking_message" maxlength="300" value="${esc(clinic.booking_message || '')}" placeholder="Ej.: Para grupos de más de 8 personas, llamadnos al 600 000 000.">
             <p class="hint">El asistente responderá dudas y, cuando quieran reservar, cambiar o cancelar, enviará este enlace. No puede ver ni tocar las ${esc(bt.bookings)}.</p>
@@ -505,12 +505,12 @@ router.post('/onboarding/:id/agenda', loadClinic, form, (req, res) => {
   const mode = business.BOOKING_MODES[b.booking_mode] ? b.booking_mode : 'calendar';
   if (mode !== 'calendar') {
     const url = String(b.booking_url || '').trim();
-    if (mode === 'link' && !/^https?:\/\/[^\s]+\.[^\s]+/i.test(url)) {
-      return go(res, req.clinic, 'agenda', { error: 'Pon el enlace de reservas completo, empezando por https://' });
+    if (mode === 'link' && !/https?:\/\/[^\s]+\.[^\s]+/i.test(url)) {
+      return go(res, req.clinic, 'agenda', { error: 'Pon al menos un enlace de reservas completo, empezando por https://' });
     }
     const clinic = clinics.updateClinic(req.clinic.id, {
       booking_mode: mode,
-      booking_url: mode === 'link' ? url.slice(0, 500) : req.clinic.booking_url,
+      booking_url: mode === 'link' ? url.replace(/\r\n?/g, '\n').slice(0, 1000) : req.clinic.booking_url,
       booking_message: mode === 'link' ? String(b.booking_message || '').trim().slice(0, 300) || null : req.clinic.booking_message,
       calendar_provider: 'none',
       onboarding_step: 'whatsapp',
@@ -1049,7 +1049,7 @@ router.get('/onboarding/:id/activar', loadClinic, async (req, res) => {
     { ok: stepDone(clinic, 'datos'), label: `Datos de ${bt.placeThe} (dirección y horario)`, step: 'datos', required: true },
     {
       ok: stepDone(clinic, 'agenda'),
-      label: `Reservas: ${business.BOOKING_MODES[bmode].label}${bmode === 'link' && clinic.booking_url ? ` (${clinic.booking_url})` : ''}`,
+      label: `Reservas: ${business.BOOKING_MODES[bmode].label}${bmode === 'link' && clinic.booking_url ? ` (${clinic.booking_url.replace(/\n+/g, ' · ')})` : ''}`,
       step: 'agenda',
       required: true,
     },
