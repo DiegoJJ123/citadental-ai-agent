@@ -27,6 +27,10 @@ const UPDATABLE_FIELDS = [
   'reminder_template_params',
   'reminder_hours',
   'plan',
+  'business_type',
+  'booking_mode',
+  'booking_url',
+  'booking_message',
 ];
 
 function parseJson(text) {

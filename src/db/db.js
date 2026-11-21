@@ -342,6 +342,33 @@ if (db.prepare('PRAGMA user_version').get().user_version < 6) {
   raw.exec('PRAGMA user_version = 6;');
 }
 
+// ---------------------------------------------------------------------------
+// v7: tipos de negocio (clínica dental, restaurante, otro) y modos de reserva
+// (calendar | link | request). Ver src/services/business.js.
+// - booking_requests: solicitudes de reserva recogidas en modo "request".
+// ---------------------------------------------------------------------------
+if (db.prepare('PRAGMA user_version').get().user_version < 7) {
+  db.transaction(() => {
+    db.exec(`
+    ALTER TABLE clinics ADD COLUMN business_type TEXT NOT NULL DEFAULT 'dental';
+    ALTER TABLE clinics ADD COLUMN booking_mode TEXT NOT NULL DEFAULT 'calendar';
+    ALTER TABLE clinics ADD COLUMN booking_url TEXT;
+    ALTER TABLE clinics ADD COLUMN booking_message TEXT;
+    CREATE TABLE booking_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      clinic_id INTEGER NOT NULL,
+      phone TEXT NOT NULL,
+      name TEXT,
+      details TEXT NOT NULL,     -- qué pide (fecha/hora preferida, personas, servicio…)
+      status TEXT NOT NULL DEFAULT 'pendiente',  -- pendiente | confirmada | descartada
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX idx_booking_requests_clinic ON booking_requests(clinic_id, id);
+    `);
+  })();
+  raw.exec('PRAGMA user_version = 7;');
+}
+
 // La clínica demo responde por el número del entorno (WHATSAPP_PHONE_NUMBER_ID).
 if (process.env.WHATSAPP_PHONE_NUMBER_ID) {
   db.prepare('UPDATE clinics SET whatsapp_phone_number_id = ? WHERE id = ? AND whatsapp_phone_number_id IS NOT ?').run(

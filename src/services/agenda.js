@@ -50,7 +50,9 @@ function treatmentsOf(clinic) {
 
 // Gesden / Clinic Cloud también usan, de momento, un Google Calendar dedicado.
 function usesGoogle(clinic) {
-  return !clinic.isDemo && Boolean(clinic.google_refresh_token);
+  // Solo en modo «reserva el asistente»: con enlace o solicitud no se usa calendario.
+  const mode = clinic.booking_mode || 'calendar';
+  return !clinic.isDemo && mode === 'calendar' && Boolean(clinic.google_refresh_token);
 }
 
 const toMin = (hhmm) => {

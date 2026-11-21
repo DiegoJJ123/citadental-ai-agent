@@ -5,6 +5,7 @@ const agenda = require('./agenda');
 const info = require('./clinicInfo');
 const whatsapp = require('./whatsapp');
 const calendar = require('./calendar');
+const business = require('./business');
 
 const SALES_TEAM_PHONE = process.env.SALES_TEAM_PHONE;
 
@@ -117,6 +118,29 @@ const TOOLS = [
     },
   },
 ];
+
+// Modo «solicitud»: el asistente no reserva; recoge lo que pide el cliente y
+// avisa al negocio para que lo apunte en su programa y le confirme.
+const REQUEST_TOOL = {
+  type: 'function',
+  function: {
+    name: 'solicitar_reserva',
+    description:
+      'Envía al negocio una solicitud de reserva (o de cambio/cancelación) con lo que pide el cliente. El negocio la revisa y le confirma; NO queda confirmada al llamar a esta función.',
+    parameters: {
+      type: 'object',
+      properties: {
+        nombre: { type: 'string', description: 'Nombre del cliente.' },
+        detalle: {
+          type: 'string',
+          description:
+            'Qué pide, con todo lo útil: tipo (nueva reserva, cambio o cancelación), día y hora preferidos o alternativas, número de personas o servicio, y cualquier observación.',
+        },
+      },
+      required: ['detalle'],
+    },
+  },
+};
 
 function formatSlot(slot, clinicRec) {
   const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -233,7 +257,7 @@ async function executeTool(name, input, phone, clinicRec, opts = {}) {
         );
       } else if (clinicRec.reception_phone && !opts.isTest) {
         // Aviso a la recepción de la clínica, desde el propio número de la clínica.
-        const aviso = `🙋 Un paciente necesita atención de una persona.
+        const aviso = `🙋 Un ${business.typeOf(clinicRec).customer} necesita atención de una persona.
 WhatsApp: +${phone}
 Motivo: ${input.motivo || '—'}
 El asistente ha dejado de responder en ese chat.`;
@@ -246,6 +270,18 @@ El asistente ha dejado de responder en ese chat.`;
           .emailReception(clinicRec, phone, input.motivo)
           .catch((err) => console.error('Error enviando el email de escalada:', err));
       }
+      return { ok: true };
+    }
+    case 'solicitar_reserva': {
+      const detalle = String(input.detalle || '').trim().slice(0, 1500);
+      if (!detalle) return { error: 'Falta el detalle de la solicitud.' };
+      const nombre = String(input.nombre || '').trim().slice(0, 120) || null;
+      if (opts.isTest) return { ok: true, prueba: true };
+      db.prepare('INSERT INTO booking_requests (clinic_id, phone, name, details) VALUES (?, ?, ?, ?)').run(clinicRec.id, phone, nombre, detalle);
+      require('./messages').log(clinicRec.id, phone, 'out', 'system', `Solicitud de ${business.typeOf(clinicRec).booking} enviada al equipo: ${detalle}`);
+      require('./escalation')
+        .notifyRequest(clinicRec, phone, nombre, detalle)
+        .catch((err) => console.error('Error avisando de la solicitud de reserva:', err));
       return { ok: true };
     }
     default:
@@ -415,28 +451,57 @@ function getClinicSystemPrompt(clinicRec) {
     ? JSON.stringify(clinicRec.info, null, 2)
     : '(todavía no hay datos cargados)';
 
+  const t = business.typeOf(clinicRec);
+  const mode = business.modeOf(clinicRec);
+
+  let capacidades;
+  if (mode === 'calendar') {
+    capacidades = `Puedes:
+- Reservar ${t.bookings}: usa consultar_disponibilidad para ofrecer huecos reales, confirma el hueco elegido, pide el nombre del ${t.customer} si no lo tienes y usa reservar_cita.
+- Modificar ${t.bookings} (consultar_proxima_cita, consultar_disponibilidad, modificar_cita) y cancelarlas (cancelar_cita).
+- Decir al ${t.customer} cuándo es su próxima ${t.booking} (consultar_proxima_cita).
+- Responder preguntas sobre ${t.placeThe} usando EXCLUSIVAMENTE los datos de abajo.
+
+SERVICIOS QUE SE PUEDEN RESERVAR (usa la clave en consultar_disponibilidad):
+${tratamientos}
+Si piden algo que no está en esta lista, ofrece lo más parecido o pasa la conversación al equipo.
+
+Sobre las ${t.bookings}:
+- Los huecos SIEMPRE salen de consultar_disponibilidad. Si no hay huecos, dilo y ofrece pasar con el equipo.
+- Solo puedes cambiar o cancelar ${t.bookings} hechas por WhatsApp. Si el ${t.customer} quiere cambiar o cancelar una que no aparece con consultar_proxima_cita (por ejemplo, la pidió por teléfono o en persona), no le digas que no existe: usa escalar_a_humano para que el equipo lo gestione.`;
+  } else if (mode === 'link') {
+    const extra = clinicRec.booking_message ? `\nAcompaña el enlace con esta indicación del negocio: "${clinicRec.booking_message}"` : '';
+    capacidades = `Puedes:
+- Responder preguntas sobre ${t.placeThe} usando EXCLUSIVAMENTE los datos de abajo.
+- Cuando el ${t.customer} quiera hacer, cambiar o cancelar una ${t.booking}, envíale este enlace para que lo haga él mismo: ${clinicRec.booking_url || '(sin enlace configurado: usa escalar_a_humano)'}${extra}
+
+Sobre las ${t.bookings}:
+- NO puedes ver, hacer, confirmar, cambiar ni cancelar ${t.bookings} tú. Nunca digas que una ${t.booking} está hecha o confirmada: el ${t.customer} la hace en el enlace.
+- Si el enlace no le funciona o necesita algo especial, usa escalar_a_humano.`;
+  } else {
+    capacidades = `Puedes:
+- Responder preguntas sobre ${t.placeThe} usando EXCLUSIVAMENTE los datos de abajo.
+- Recoger solicitudes de ${t.booking}: pregunta lo necesario (nombre, día y hora que prefiere o alternativas${t.key === 'restaurante' ? ', número de personas' : t.key === 'dental' ? ', motivo de la visita' : ', qué servicio'} y cualquier observación) y usa solicitar_reserva.
+- Para cambiar o cancelar una ${t.booking}, recoge los datos y usa también solicitar_reserva indicando que es un cambio o una cancelación.
+
+Sobre las ${t.bookings}:
+- NO puedes confirmar ${t.bookings}. Tras usar solicitar_reserva, dile con claridad que su solicitud ha llegado al equipo de ${t.placeThe} y que le confirmarán lo antes posible. Nunca digas que está confirmada.
+- No ofrezcas horas concretas como disponibles: no ves la agenda.`;
+  }
+
   return `Hoy es ${hoy} (hora de España, Europe/Madrid). Usa esta fecha para calcular fechas relativas ("mañana", "el jueves", etc.).
 
-Eres el asistente virtual de WhatsApp de la clínica dental "${clinicRec.name}". Atiendes a sus pacientes en español de España, con tono cercano, cálido y profesional. Frases cortas, sin tecnicismos. Como mucho un emoji ocasional.
+${t.persona(clinicRec.name)} en español de España, con tono cercano, cálido y profesional. Frases cortas, sin tecnicismos. Como mucho un emoji ocasional.
 
-Puedes:
-- Reservar citas: usa consultar_disponibilidad para ofrecer huecos reales, confirma el hueco elegido, pide el nombre del paciente si no lo tienes y usa reservar_cita.
-- Modificar citas (consultar_proxima_cita, consultar_disponibilidad, modificar_cita) y cancelarlas (cancelar_cita).
-- Decir al paciente cuándo es su próxima cita (consultar_proxima_cita).
-- Responder preguntas sobre la clínica usando EXCLUSIVAMENTE estos datos:
+${capacidades}
 
-DATOS DE LA CLÍNICA:
+DATOS DE ${t.placeThe.toUpperCase()}:
 ${datos}
 
-TRATAMIENTOS QUE SE PUEDEN RESERVAR (usa la clave en consultar_disponibilidad):
-${tratamientos}
-Si el paciente pide algo que no está en esta lista, ofrécele una revisión o pasa la conversación al equipo.
-
 Reglas obligatorias:
-- NUNCA inventes datos: ni precios, ni horarios, ni direcciones, ni tratamientos, ni mutuas. Si algo no está en los datos de arriba, dilo con naturalidad ("eso te lo confirma el equipo de la clínica") y ofrece pasar la conversación a una persona.
-- Los huecos de agenda SIEMPRE salen de consultar_disponibilidad. Si no hay huecos, dilo y ofrece pasar con el equipo.
-- No des consejos médicos ni diagnósticos. Ante dolor fuerte, sangrado, golpes o una urgencia, ofrece la primera cita de urgencia disponible y, si no hay, usa escalar_a_humano.
-- Si el paciente pide hablar con una persona, se frustra, tiene una reclamación o el asunto se sale de tu ámbito, usa escalar_a_humano y dile con naturalidad que alguien del equipo seguirá la conversación.
+- NUNCA inventes datos: ni precios, ni horarios, ni direcciones, ni servicios. Si algo no está en los datos de arriba, dilo con naturalidad ("eso te lo confirma el equipo") y ofrece pasar la conversación a una persona.
+${t.rules.map((r) => '- ' + r).join('\n')}
+- Si el ${t.customer} pide hablar con una persona, se frustra, tiene una reclamación o el asunto se sale de tu ámbito, usa escalar_a_humano y dile con naturalidad que alguien del equipo seguirá la conversación.
 - Mensajes breves de WhatsApp. Listas cortas si ofreces varias opciones.
 - No reveles qué modelo o proveedor de IA usas; eres "el asistente virtual de ${clinicRec.name}".`;
 }
@@ -448,6 +513,10 @@ function getSystemPrompt(clinicRec) {
 // Herramientas de una clínica real: sin captación de leads (solo existe en el
 // número comercial) y con SUS tratamientos en vez de la lista fija de la demo.
 function clinicTools(clinicRec) {
+  const mode = business.modeOf(clinicRec);
+  const escalate = TOOLS.find((t) => t.function.name === 'escalar_a_humano');
+  if (mode === 'link') return [escalate];
+  if (mode === 'request') return [REQUEST_TOOL, escalate];
   const keys = agenda.treatmentsOf(clinicRec).map((t) => t.key);
   return TOOLS.filter((t) => t.function.name !== 'registrar_lead_demo').map((t) => {
     if (t.function.name !== 'consultar_disponibilidad') return t;

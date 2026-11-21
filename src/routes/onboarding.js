@@ -16,6 +16,7 @@ const ycloud = require('../services/ycloud');
 const reminders = require('../services/reminders');
 const health = require('../services/health');
 const usage = require('../services/usage');
+const business = require('../services/business');
 const backup = require('../services/backup');
 const mailer = require('../services/mailer');
 const templates = require('../services/templates');
@@ -24,9 +25,9 @@ const router = express.Router();
 const form = express.urlencoded({ extended: false, limit: '200kb' });
 
 const STEPS = [
-  { key: 'web', title: 'Web de la clínica' },
-  { key: 'datos', title: 'Datos de la clínica' },
-  { key: 'agenda', title: 'Agenda y horario' },
+  { key: 'web', title: 'Negocio y web' },
+  { key: 'datos', title: 'Datos del negocio' },
+  { key: 'agenda', title: 'Reservas' },
   { key: 'calendario', title: 'Conectar calendario' },
   { key: 'whatsapp', title: 'Conectar WhatsApp' },
   { key: 'recepcion', title: 'Avisos a recepción' },
@@ -124,10 +125,15 @@ function stepDone(clinic, key) {
       return Boolean(clinic.website);
     case 'datos':
       return Boolean(clinic.info?.direccion && clinic.info?.horario);
-    case 'agenda':
-      return Boolean(clinic.calendar_provider && clinic.schedule?.hours);
+    case 'agenda': {
+      const mode = business.modeOf(clinic);
+      if (!clinic.calendar_provider) return false;
+      if (mode === 'calendar') return Boolean(clinic.schedule?.hours);
+      if (mode === 'link') return Boolean(clinic.booking_url);
+      return true;
+    }
     case 'calendario':
-      return Boolean(clinic.google_refresh_token);
+      return business.modeOf(clinic) !== 'calendar' || Boolean(clinic.google_refresh_token);
     case 'whatsapp':
       return Boolean(clinic.whatsapp_phone || clinic.whatsapp_phone_number_id);
     case 'recepcion':
@@ -322,31 +328,37 @@ router.get('/onboarding/salud/descargar', (req, res) => {
 // ---------------------------------------------------------------------------
 function webForm(req, clinic) {
   const action = clinic ? `/onboarding/${clinic.id}/web` : '/onboarding/nueva';
+  const current = business.typeOf(clinic).key;
   return page(req, {
-    title: 'Web de la clínica',
+    title: 'Negocio y web',
     clinic,
     step: 'web',
-    body: `<h1>1. Web de la clínica</h1>
-      <p class="sub">Leeremos la web y rellenaremos automáticamente dirección, horario, tratamientos, precios y mutuas. En el siguiente paso podrás revisarlo todo.</p>
+    body: `<h1>1. Negocio y web</h1>
+      <p class="sub">Elige el tipo de negocio y, si tiene web, la leeremos para rellenar automáticamente sus datos (dirección, horario, servicios, precios…). En el siguiente paso podrás revisarlo todo.</p>
       <form method="post" action="${action}" data-busy="Leyendo la web… (puede tardar un minuto)">
-        <label>Nombre de la clínica</label>
-        <input type="text" name="name" required value="${esc(clinic?.name || '')}" placeholder="Clínica Dental Sonrisa">
-        <label>Web de la clínica <span class="hint">(opcional: si no tiene, rellenarás los datos a mano)</span></label>
-        <input type="text" name="website" value="${esc(clinic?.website || '')}" placeholder="www.clinicasonrisa.es">
+        <label>Tipo de negocio</label>
+        ${Object.values(business.TYPES)
+          .map((t) => `<label class="provider"><input type="radio" name="business_type" value="${t.key}" ${t.key === current ? 'checked' : ''}><span><strong>${esc(t.label)}</strong><br><span class="hint">El asistente hablará de ${esc(t.bookings)} y ${esc(t.customers)}${t.key === 'dental' ? ', tratamientos y mutuas' : t.key === 'restaurante' ? ', carta, menú y alérgenos' : ''}.</span></span></label>`)
+          .join('')}
+        <label>Nombre del negocio</label>
+        <input type="text" name="name" required value="${esc(clinic?.name || '')}" placeholder="Clínica Dental Sonrisa / Restaurante La Plaza">
+        <label>Web <span class="hint">(opcional: si no tiene, rellenarás los datos a mano)</span></label>
+        <input type="text" name="website" value="${esc(clinic?.website || '')}" placeholder="www.minegocio.es">
         ${clinic ? '<div class="info" style="margin-top:14px">Volver a leer la web sustituirá los datos del paso 2 por los nuevos.</div>' : ''}
-        <div class="actions"><a class="btn sec" href="/onboarding">Cancelar</a><button class="btn" type="submit">${clinic ? 'Volver a leer la web' : 'Crear clínica y leer la web'}</button></div>
+        <div class="actions"><a class="btn sec" href="/onboarding">Cancelar</a><button class="btn" type="submit">${clinic ? 'Guardar y volver a leer la web' : 'Crear y leer la web'}</button></div>
       </form>`,
   });
 }
 
 async function runExtraction(clinic, website) {
-  if (!website) return { ok: 'Clínica creada. Rellena sus datos.' };
+  if (!website) return { ok: 'Negocio guardado. Rellena sus datos.' };
+  const FIELDS = business.fieldsFor(clinic);
   try {
-    const { info, pagesRead } = await extractClinicInfo(website);
+    const { info, pagesRead } = await extractClinicInfo(website, { type: business.typeOf(clinic).key });
     if (!info.nombre) info.nombre = clinic.name;
     clinics.updateClinic(clinic.id, { info_json: info });
-    const filled = INFO_FIELDS.filter((f) => info[f.key]).length;
-    return { ok: `He leído ${pagesRead.length} página(s) y rellenado ${filled} de ${INFO_FIELDS.length} campos. Revisa que todo sea correcto.` };
+    const filled = FIELDS.filter((f) => info[f.key]).length;
+    return { ok: `He leído ${pagesRead.length} página(s) y rellenado ${filled} de ${FIELDS.length} campos. Revisa que todo sea correcto.` };
   } catch (err) {
     console.error('Error leyendo la web de la clínica:', err);
     return { error: `No he podido leer la web (${err.message}). Rellena los datos a mano.` };
@@ -362,7 +374,11 @@ router.post('/onboarding/nueva', form, async (req, res) => {
   } catch (err) {
     return res.redirect(`/onboarding/nueva?error=${encodeURIComponent(err.message)}`);
   }
-  clinics.updateClinic(clinic.id, { onboarding_step: 'datos', info_json: { nombre: clinic.name } });
+  clinic = clinics.updateClinic(clinic.id, {
+    onboarding_step: 'datos',
+    info_json: { nombre: clinic.name },
+    business_type: business.TYPES[req.body.business_type] ? req.body.business_type : 'dental',
+  });
   const result = await runExtraction(clinic, clinic.website);
   go(res, clinic, 'datos', result);
 });
@@ -371,7 +387,11 @@ router.get('/onboarding/:id/web', loadClinic, (req, res) => res.send(webForm(req
 
 router.post('/onboarding/:id/web', loadClinic, form, async (req, res) => {
   const website = (req.body.website || '').trim() || null;
-  const clinic = clinics.updateClinic(req.clinic.id, { name: (req.body.name || req.clinic.name).trim(), website });
+  const clinic = clinics.updateClinic(req.clinic.id, {
+    name: (req.body.name || req.clinic.name).trim(),
+    website,
+    business_type: business.TYPES[req.body.business_type] ? req.body.business_type : business.typeOf(req.clinic).key,
+  });
   const result = await runExtraction(clinic, website);
   go(res, clinic, 'datos', result);
 });
@@ -381,7 +401,8 @@ router.post('/onboarding/:id/web', loadClinic, form, async (req, res) => {
 // ---------------------------------------------------------------------------
 router.get('/onboarding/:id/datos', loadClinic, (req, res) => {
   const { clinic } = req;
-  const fields = INFO_FIELDS.map(
+  const t = business.typeOf(clinic);
+  const fields = business.fieldsFor(clinic).map(
     (f) => `<label>${esc(f.label)}</label>${
       f.multiline
         ? `<textarea name="${f.key}">${esc(clinic.info[f.key] || '')}</textarea>`
@@ -390,11 +411,11 @@ router.get('/onboarding/:id/datos', loadClinic, (req, res) => {
   ).join('');
   res.send(
     page(req, {
-      title: 'Datos de la clínica',
+      title: 'Datos del negocio',
       clinic,
       step: 'datos',
-      body: `<h1>2. Datos de la clínica</h1>
-        <p class="sub">El asistente responderá a los pacientes <strong>solo</strong> con esta información y nunca inventará nada. Lo que no esté aquí, lo derivará al equipo.</p>
+      body: `<h1>2. Datos de ${esc(t.placeThe)}</h1>
+        <p class="sub">El asistente responderá a los ${esc(t.customers)} <strong>solo</strong> con esta información y nunca inventará nada. Lo que no esté aquí, lo derivará al equipo.</p>
         <form method="post">${fields}${stepActions(clinic, 'datos')}</form>`,
     })
   );
@@ -402,7 +423,7 @@ router.get('/onboarding/:id/datos', loadClinic, (req, res) => {
 
 router.post('/onboarding/:id/datos', loadClinic, form, (req, res) => {
   const info = {};
-  for (const f of INFO_FIELDS) info[f.key] = String(req.body[f.key] || '').trim();
+  for (const f of business.fieldsFor(req.clinic)) info[f.key] = String(req.body[f.key] || '').trim();
   const clinic = clinics.updateClinic(req.clinic.id, {
     info_json: info,
     name: info.nombre || req.clinic.name,
@@ -417,7 +438,8 @@ router.post('/onboarding/:id/datos', loadClinic, form, (req, res) => {
 router.get('/onboarding/:id/agenda', loadClinic, (req, res) => {
   const { clinic } = req;
   const sch = agenda.scheduleOf(clinic);
-  const provider = clinic.calendar_provider || 'google';
+  const bt = business.typeOf(clinic);
+  const bmode = business.modeOf(clinic);
   const hoursRows = DAYS.map(({ n, name }) => {
     const r = sch.hours[n] || sch.hours[String(n)] || [];
     const [m, t] = [r[0] || ['', ''], r[1] || ['', '']];
@@ -435,37 +457,66 @@ router.get('/onboarding/:id/agenda', loadClinic, (req, res) => {
     .join('');
   res.send(
     page(req, {
-      title: 'Agenda',
+      title: 'Reservas',
       clinic,
       step: 'agenda',
-      body: `<h1>3. Agenda y horario</h1>
-        <p class="sub">Con esto el asistente sabe qué huecos puede ofrecer. Las citas se crean en el Google Calendar de la clínica y los huecos ocupados de ese calendario nunca se ofrecen.</p>
+      body: `<h1>3. Reservas</h1>
+        <p class="sub">¿Cómo reservan hoy los ${esc(bt.customers)} de ${esc(bt.placeThe)}? Elige la opción que <strong>no les cambie su forma de trabajar</strong>.</p>
         <form method="post">
-          <h2>¿Qué programa usa la clínica para la agenda?</h2>
-          ${PROVIDERS.map(
-            (p) => `<label class="provider ${p.disabled ? 'dis' : ''}"><input type="radio" name="provider" value="${p.key}" ${p.key === provider ? 'checked' : ''} ${p.disabled ? 'disabled' : ''}>
-              <span><strong>${esc(p.name)}</strong><br><span class="hint">${esc(p.desc)}</span></span></label>`
-          ).join('')}
-          <h2>Horario de citas</h2>
+          ${Object.values(business.BOOKING_MODES)
+            .map((m) => `<label class="provider"><input type="radio" name="booking_mode" value="${m.key}" ${m.key === bmode ? 'checked' : ''} onchange="toggleMode()"><span><strong>${esc(m.label)}</strong><br><span class="hint">${esc(m.desc)}</span></span></label>`)
+            .join('')}
+          <div id="mode-link" class="mode-box">
+            <h2>Enlace de reservas</h2>
+            <label>Enlace donde el ${esc(bt.customer)} hace su ${esc(bt.booking)} <span class="hint">(Restoo, Doctoralia, TheFork, Calendly, su web…)</span></label>
+            <input type="url" name="booking_url" value="${esc(clinic.booking_url || '')}" placeholder="https://…">
+            <label>Frase que acompaña al enlace <span class="hint">(opcional)</span></label>
+            <input type="text" name="booking_message" maxlength="300" value="${esc(clinic.booking_message || '')}" placeholder="Ej.: Para grupos de más de 8 personas, llamadnos al 600 000 000.">
+            <p class="hint">El asistente responderá dudas y, cuando quieran reservar, cambiar o cancelar, enviará este enlace. No puede ver ni tocar las ${esc(bt.bookings)}.</p>
+          </div>
+          <div id="mode-request" class="mode-box">
+            <div class="info">El asistente preguntará lo necesario (nombre, día y hora que prefiere${bt.key === 'restaurante' ? ', número de personas' : ''}…) y avisará a ${esc(bt.placeThe)} por <strong>email y WhatsApp</strong> (paso 6). La ${esc(bt.booking)} no queda confirmada hasta que el equipo la apunte y se lo confirme al ${esc(bt.customer)}. Las solicitudes también se ven en su panel.</div>
+          </div>
+          <div id="mode-calendar" class="mode-box">
+          <input type="hidden" name="provider" value="google">
+          <p class="hint">Las ${esc(bt.bookings)} se crean en el Google Calendar del negocio y los huecos ocupados de ese calendario nunca se ofrecen.</p>
+          <h2>Horario de ${esc(bt.bookings)}</h2>
           <p class="hint">Deja en blanco los días o tramos sin citas. Para bloquear vacaciones o festivos basta con crear un evento de día completo en el calendario.</p>
           <table><thead><tr><th>Día</th><th>Mañana</th><th>Tarde</th></tr></thead><tbody>${hoursRows}</tbody></table>
-          <h2>Tratamientos que se pueden reservar</h2>
-          <p class="hint">Duración de la cita en minutos. Deja el nombre vacío para quitar un tratamiento.</p>
-          <table><thead><tr><th>Tratamiento</th><th>Duración</th></tr></thead><tbody>${tRows}</tbody></table>
+          <h2>${bt.key === 'dental' ? 'Tratamientos' : 'Servicios'} que se pueden reservar</h2>
+          <p class="hint">Duración en minutos. Deja el nombre vacío para quitarlo.</p>
+          <table><thead><tr><th>${bt.key === 'dental' ? 'Tratamiento' : 'Servicio'}</th><th>Duración</th></tr></thead><tbody>${tRows}</tbody></table>
           <div class="grid2">
             <div><label>Antelación mínima <span class="hint">(horas)</span></label><input type="number" min="0" max="72" name="min_notice_hours" value="${esc(sch.min_notice_hours)}"></div>
             <div><label>Reservar con hasta <span class="hint">(días vista)</span></label><input type="number" min="1" max="90" name="horizon_days" value="${esc(sch.horizon_days)}"></div>
             <div><label>Intervalo entre citas <span class="hint">(minutos)</span></label>
               <select name="slot_step_min">${[10, 15, 20, 30, 45, 60].map((m) => `<option ${Number(sch.slot_step_min) === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
           </div>
+          </div>
           ${stepActions(clinic, 'agenda')}
-        </form>`,
+        </form>
+        <script>function toggleMode(){ const v=(document.querySelector('input[name=booking_mode]:checked')||{}).value||'calendar'; ['calendar','link','request'].forEach(m=>{ const el=document.getElementById('mode-'+m); if(el) el.style.display = m===v ? '' : 'none'; }); } toggleMode();</script>`,
     })
   );
 });
 
 router.post('/onboarding/:id/agenda', loadClinic, form, (req, res) => {
   const b = req.body;
+  const mode = business.BOOKING_MODES[b.booking_mode] ? b.booking_mode : 'calendar';
+  if (mode !== 'calendar') {
+    const url = String(b.booking_url || '').trim();
+    if (mode === 'link' && !/^https?:\/\/[^\s]+\.[^\s]+/i.test(url)) {
+      return go(res, req.clinic, 'agenda', { error: 'Pon el enlace de reservas completo, empezando por https://' });
+    }
+    const clinic = clinics.updateClinic(req.clinic.id, {
+      booking_mode: mode,
+      booking_url: mode === 'link' ? url.slice(0, 500) : req.clinic.booking_url,
+      booking_message: mode === 'link' ? String(b.booking_message || '').trim().slice(0, 300) || null : req.clinic.booking_message,
+      calendar_provider: 'none',
+      onboarding_step: 'whatsapp',
+    });
+    return go(res, clinic, 'whatsapp', { ok: 1 });
+  }
   const valid = (t) => /^\d{2}:\d{2}$/.test(t || '');
   const hours = {};
   for (const { n } of DAYS) {
@@ -486,11 +537,11 @@ router.post('/onboarding/:id/agenda', loadClinic, form, (req, res) => {
     usedKeys.add(key);
     treatments.push({ key, nombre, duracion: Math.min(240, Math.max(10, Number(b[`t${i}_dur`]) || 30)) });
   }
-  if (!treatments.length) return go(res, req.clinic, 'agenda', { error: 'Añade al menos un tratamiento.' });
+  if (!treatments.length) return go(res, req.clinic, 'agenda', { error: 'Añade al menos un servicio que se pueda reservar.' });
   if (!Object.values(hours).some((r) => r.length)) return go(res, req.clinic, 'agenda', { error: 'Indica al menos un día con horario de citas.' });
-  const provider = PROVIDERS.find((p) => p.key === b.provider && !p.disabled)?.key || 'google';
   const clinic = clinics.updateClinic(req.clinic.id, {
-    calendar_provider: provider,
+    booking_mode: 'calendar',
+    calendar_provider: 'google',
     onboarding_step: 'calendario',
     schedule_json: {
       timezone: 'Europe/Madrid',
@@ -509,6 +560,19 @@ router.post('/onboarding/:id/agenda', loadClinic, form, (req, res) => {
 // ---------------------------------------------------------------------------
 router.get('/onboarding/:id/calendario', loadClinic, async (req, res) => {
   const { clinic } = req;
+  if (business.modeOf(clinic) !== 'calendar') {
+    const m = business.BOOKING_MODES[business.modeOf(clinic)];
+    return res.send(
+      page(req, {
+        title: 'Calendario',
+        clinic,
+        step: 'calendario',
+        body: `<h1>4. Conectar el calendario</h1>
+          <div class="ok">✓ No hace falta: este negocio usa «${esc(m.label)}». El asistente no necesita acceso a ningún calendario.</div>
+          <div class="actions"><a class="btn sec" href="/onboarding/${clinic.id}/agenda">← Reservas</a><a class="btn" href="/onboarding/${clinic.id}/whatsapp">Continuar →</a></div>`,
+      })
+    );
+  }
   const dedicated = ['gesden', 'cliniccloud'].includes(clinic.calendar_provider);
   let status = '';
   if (clinic.google_refresh_token) {
@@ -670,7 +734,10 @@ router.get('/onboarding/:id/whatsapp', loadClinic, (req, res) => {
         ${connected ? `<div class="ok">✓ Número conectado: <strong>${esc(clinic.whatsapp_display_phone || clinic.whatsapp_phone)}</strong></div>` : ''}
         ${
           connected
-            ? reminderSection(clinic)
+            ? business.modeOf(clinic) === 'calendar'
+              ? reminderSection(clinic)
+              : `<div class="info">Sin recordatorios automáticos: con «${esc(business.BOOKING_MODES[business.modeOf(clinic)].label)}» el asistente no sabe qué ${esc(business.typeOf(clinic).bookings)} hay. Si el negocio los quiere, los envía su propia app o programa.</div>
+                 <div class="actions"><span></span><a class="btn green" href="/onboarding/${clinic.id}/recepcion">Continuar: avisos a recepción →</a></div>`
             : ''
         }
         <h2>${connected ? 'Cambiar de número' : 'Cómo conectarlo'}</h2>
@@ -963,9 +1030,11 @@ router.post('/onboarding/:id/prueba/reset', loadClinic, async (req, res) => {
 // ---------------------------------------------------------------------------
 router.get('/onboarding/:id/activar', loadClinic, async (req, res) => {
   const { clinic } = req;
+  const bmode = business.modeOf(clinic);
+  const bt = business.typeOf(clinic);
   let calendarOk = false;
   let calendarMsg = 'Sin conectar';
-  if (clinic.google_refresh_token) {
+  if (bmode === 'calendar' && clinic.google_refresh_token) {
     try {
       await gcal.ping(clinic);
       calendarOk = true;
@@ -977,18 +1046,23 @@ router.get('/onboarding/:id/activar', loadClinic, async (req, res) => {
   const pendingTests = db.prepare("SELECT COUNT(*) n FROM appointments WHERE clinic_id = ? AND is_test = 1 AND status = 'confirmada'").get(clinic.id).n;
   const inboundOk = realMessageReceived(clinic);
   const checks = [
-    { ok: stepDone(clinic, 'datos'), label: 'Datos de la clínica (dirección y horario)', step: 'datos', required: true },
-    { ok: stepDone(clinic, 'agenda'), label: 'Agenda y tratamientos configurados', step: 'agenda', required: true },
-    { ok: calendarOk, label: `Google Calendar: ${calendarMsg}`, step: 'calendario', required: true },
-    { ok: stepDone(clinic, 'whatsapp'), label: `WhatsApp: ${clinic.whatsapp_display_phone || 'sin conectar'}`, step: 'whatsapp', required: true },
+    { ok: stepDone(clinic, 'datos'), label: `Datos de ${bt.placeThe} (dirección y horario)`, step: 'datos', required: true },
     {
+      ok: stepDone(clinic, 'agenda'),
+      label: `Reservas: ${business.BOOKING_MODES[bmode].label}${bmode === 'link' && clinic.booking_url ? ` (${clinic.booking_url})` : ''}`,
+      step: 'agenda',
+      required: true,
+    },
+    ...(bmode === 'calendar' ? [{ ok: calendarOk, label: `Google Calendar: ${calendarMsg}`, step: 'calendario', required: true }] : []),
+    { ok: stepDone(clinic, 'whatsapp'), label: `WhatsApp: ${clinic.whatsapp_display_phone || 'sin conectar'}`, step: 'whatsapp', required: true },
+    ...(bmode !== 'calendar' ? [] : [{
       ok: templates.isApproved(clinic.reminder_template_status),
       label: templates.isApproved(clinic.reminder_template_status)
         ? 'Plantilla de recordatorio aprobada'
         : `Plantilla de recordatorio: ${TEMPLATE_LABEL[clinic.reminder_template_status] || 'sin crear'} (sin ella solo llegan recordatorios a quien escribió en las últimas 24 h)`,
       step: 'whatsapp',
       required: false,
-    },
+    }]),
     {
       ok: inboundOk,
       label: inboundOk
@@ -1109,20 +1183,23 @@ router.post('/onboarding/:id/estado', loadClinic, form, async (req, res) => {
   const status = req.body.status === 'activa' ? 'activa' : 'pausada';
   if (status === 'activa') {
     const c = req.clinic;
-    if (!(stepDone(c, 'datos') && stepDone(c, 'agenda') && c.google_refresh_token && stepDone(c, 'whatsapp') && stepDone(c, 'recepcion'))) {
+    const usesCal = business.modeOf(c) === 'calendar';
+    if (!(stepDone(c, 'datos') && stepDone(c, 'agenda') && (!usesCal || c.google_refresh_token) && stepDone(c, 'whatsapp') && stepDone(c, 'recepcion'))) {
       return go(res, c, 'activar', { error: 'Faltan pasos obligatorios.' });
     }
     if (!realMessageReceived(c)) {
       return go(res, c, 'activar', { error: 'Antes de activar, escribe un mensaje al número de la clínica desde tu móvil y comprueba que llega.' });
     }
-    try {
-      await gcal.ping(c);
-    } catch (err) {
-      return go(res, c, 'activar', { error: `Google Calendar no funciona: ${err.message}` });
+    if (usesCal) {
+      try {
+        await gcal.ping(c);
+      } catch (err) {
+        return go(res, c, 'activar', { error: `Google Calendar no funciona: ${err.message}` });
+      }
     }
   }
   const clinic = clinics.updateClinic(req.clinic.id, { status, onboarding_step: 'activar' });
-  go(res, clinic, 'activar', { ok: status === 'activa' ? '¡Asistente activado! Ya responde a los pacientes por WhatsApp.' : 'Asistente pausado.' });
+  go(res, clinic, 'activar', { ok: status === 'activa' ? `¡Asistente activado! Ya responde a los ${business.typeOf(req.clinic).customers} por WhatsApp.` : 'Asistente pausado.' });
 });
 
 module.exports = router;

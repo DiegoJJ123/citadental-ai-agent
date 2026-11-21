@@ -103,10 +103,12 @@ async function crawl(website) {
   return pages.filter((p) => (total += p.text.length) <= MAX_TOTAL_CHARS);
 }
 
-async function extractClinicInfo(website, { openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }), model } = {}) {
+async function extractClinicInfo(website, { openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }), model, type = 'dental' } = {}) {
+  const biz = require('./business').TYPES[type] || require('./business').TYPES.dental;
+  const FIELDS = biz.fields;
   const pages = await crawl(website);
   const corpus = pages.map((p) => `### Página: ${p.url}\n${p.text}`).join('\n\n');
-  const schema = INFO_FIELDS.map((f) => `"${f.key}": string  // ${f.label}`).join('\n');
+  const schema = FIELDS.map((f) => `"${f.key}": string  // ${f.label}`).join('\n');
 
   const response = await openai.chat.completions.create({
     model: model || process.env.OPENAI_CHAT_MODEL || 'gpt-4.1-mini',
@@ -115,13 +117,12 @@ async function extractClinicInfo(website, { openai = new OpenAI({ apiKey: proces
     messages: [
       {
         role: 'system',
-        content: `Extraes datos de la web de una clínica dental española para configurar su asistente de WhatsApp.
+        content: `Extraes datos de la web de ${biz.extractWhat} para configurar su asistente de WhatsApp.
 Devuelve SOLO un objeto JSON con estas claves (todas string, en español):
 ${schema}
 Reglas:
-- Usa EXCLUSIVAMENTE información que aparezca en el texto. Si un dato no aparece, deja "" (cadena vacía). Nunca inventes precios, horarios ni mutuas.
-- "precios": una línea por tratamiento, formato "Tratamiento: precio".
-- "tratamientos" y "mutuas": una por línea.
+- Usa EXCLUSIVAMENTE información que aparezca en el texto. Si un dato no aparece, deja "" (cadena vacía). Nunca inventes precios, horarios ni datos.
+${biz.extractRules.map((r) => '- ' + r).join('\n')}
 - "horario": tal como lo indique la web (p. ej. "Lunes a viernes 9:00-14:00 y 16:00-20:00").`,
       },
       { role: 'user', content: corpus },
@@ -135,7 +136,7 @@ Reglas:
     data = {};
   }
   const info = {};
-  for (const f of INFO_FIELDS) {
+  for (const f of FIELDS) {
     const v = data[f.key];
     info[f.key] = Array.isArray(v) ? v.join('\n') : typeof v === 'string' ? v.trim() : '';
   }

@@ -78,7 +78,7 @@ async function checkClinic(clinic, ctx) {
   const ts = String(clinic.reminder_template_status || '').toUpperCase();
   if (['REJECTED', 'PAUSED', 'DISABLED'].includes(ts)) {
     add('yellow', 'template', `La plantilla de recordatorio está «${ts}» en Meta: los recordatorios solo llegan a quien escribió en las últimas 24 h.`);
-  } else if (!clinic.isDemo && !clinic.reminder_template_name) {
+  } else if (!clinic.isDemo && !clinic.reminder_template_name && (clinic.booking_mode || 'calendar') === 'calendar') {
     add('yellow', 'template_none', 'No se ha enviado la plantilla de recordatorio a Meta (paso 5).');
   }
 

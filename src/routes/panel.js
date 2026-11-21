@@ -13,6 +13,7 @@ const { DEFAULT_TZ, zonedToDate, dateToZoned } = require('../services/tz');
 const usage = require('../services/usage');
 const agenda = require('../services/agenda');
 const gcal = require('../services/googleCalendar');
+const business = require('../services/business');
 
 const router = express.Router();
 const form = express.urlencoded({ extended: false, limit: '50kb' });
@@ -122,8 +123,8 @@ function layout({ title, clinic, base, isAdmin, body, flash, active }) {
 <meta name="robots" content="noindex"><title>${esc(title)} · ${esc(clinic.name)}</title>${brand.HEAD}<style>${CSS}</style></head><body>${brand.BG}
 <header class="topbar"><a href="${base}" style="text-decoration:none">${brand.logo(esc(clinic.name))}</a><nav>${[
     ['chats', base, 'Chats'],
-    ['citas', `${base}/citas`, 'Citas'],
-    ['pacientes', `${base}/pacientes`, 'Pacientes'],
+    ...(business.modeOf(clinic) === 'link' ? [] : [['citas', `${base}/citas`, business.modeOf(clinic) === 'request' ? 'Solicitudes' : business.typeOf(clinic).Bookings]]),
+    ['pacientes', `${base}/pacientes`, business.typeOf(clinic).Customers],
   ]
     .map(([k, href, label]) => `<a href="${href}" class="${(active || 'chats') === k ? 'on' : ''}">${label}</a>`)
     .join('')}${isAdmin ? `<a href="/onboarding">Clínicas</a><a href="/dashboard/logout">Cerrar sesión</a>` : ''}</nav></header>
@@ -185,8 +186,61 @@ function fmtDay(date) {
 // la clínica. Solo lectura: la clínica sigue gestionando su agenda como
 // siempre (si borra o mueve una cita en su calendario, aquí se refleja).
 // ---------------------------------------------------------------------------
+const REQ_STATUS = { pendiente: 'Pendiente', confirmada: 'Confirmada', descartada: 'Descartada' };
+
+function requestsView(req, res) {
+  const { clinic, base } = req;
+  const t = business.typeOf(clinic);
+  const list = db.prepare('SELECT * FROM booking_requests WHERE clinic_id = ? ORDER BY id DESC LIMIT 300').all(clinic.id);
+  const pending = list.filter((r) => r.status === 'pendiente').length;
+  const rows = list
+    .map(
+      (r) => `<div class="lead"><div class="lead-main">
+        ${avatar(r.name)}
+        <div class="grow">
+          <div class="name">${esc(r.name || `+${r.phone}`)} <span class="pill ${r.status === 'pendiente' ? 'p-off' : r.status === 'confirmada' ? 'p-bot' : 'st-perdido'}">${esc(REQ_STATUS[r.status] || r.status)}</span></div>
+          <div class="snippet">+${esc(r.phone)} · ${esc(fmtTime(r.created_at))}</div>
+          <div class="note-txt" style="background:var(--brand-soft);border-color:#D3E2FA">${esc(r.details)}</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+          <a class="btn b-sec" href="${base}/chat/${esc(r.phone)}">Ver chat</a>
+          ${r.status === 'pendiente' ? `<form method="post" action="${base}/citas/${r.id}"><input type="hidden" name="status" value="confirmada"><button class="btn b-blue" type="submit">Marcar confirmada</button></form>
+          <form method="post" action="${base}/citas/${r.id}"><input type="hidden" name="status" value="descartada"><button class="btn b-sec" type="submit">Descartar</button></form>` : ''}
+        </div></div></div>`
+    )
+    .join('');
+  res.send(
+    layout({
+      title: 'Solicitudes',
+      clinic,
+      base,
+      isAdmin: req.isAdmin,
+      active: 'citas',
+      flash: flashFrom(req.query),
+      body: `<div class="hero"><div class="hello"><img src="${brand.MASCOT_URL}" alt="" class="float"><div>
+          <span class="eyebrow${pending ? '' : ' live'}"><i></i>Solicitudes de ${esc(t.booking)} por WhatsApp</span>
+          <h1>Solicitudes de <span class="text-gradient">${esc(clinic.info?.nombre || clinic.name)}</span></h1>
+          <p>Lo que han pedido los ${esc(t.customers)} al asistente. Apuntadlas en vuestro sistema, confirmadle al ${esc(t.customer)} (desde el chat o el WhatsApp) y marcadlas como confirmadas.</p></div></div>
+          <div class="stats"><div class="stat"${pending ? ' style="border-color:#F6D3B8;background:#FDF1E7"' : ''}><b${pending ? ' style="color:#A34E12"' : ''}>${pending}</b><span>pendientes</span></div>${usageStat(clinic)}</div></div>
+        <div class="card">${rows || `<div class="empty" style="padding:26px;text-align:center;color:var(--text-muted)">Todavía no hay solicitudes.</div>`}</div>
+        <script>setTimeout(()=>location.reload(),30000)</script>`,
+    })
+  );
+}
+
+function updateRequest(req, res) {
+  const { clinic, base } = req;
+  const status = REQ_STATUS[req.body.status] ? req.body.status : null;
+  if (!status) return res.status(400).end();
+  db.prepare('UPDATE booking_requests SET status = ? WHERE id = ? AND clinic_id = ?').run(status, Number(req.params.reqId), clinic.id);
+  res.redirect(`${base}/citas?ok=${encodeURIComponent(status === 'confirmada' ? 'Marcada como confirmada.' : 'Solicitud descartada.')}`);
+}
+
 async function appointmentsView(req, res) {
   const { clinic, base } = req;
+  const mode = business.modeOf(clinic);
+  if (mode === 'request') return requestsView(req, res);
+  if (mode === 'link') return res.redirect(base);
   const tz = clinic.schedule?.timezone || DEFAULT_TZ;
   const now = new Date();
   const rows = db
@@ -250,14 +304,14 @@ async function appointmentsView(req, res) {
 
   res.send(
     layout({
-      title: 'Citas',
+      title: business.typeOf(clinic).Bookings,
       clinic,
       base,
       isAdmin: req.isAdmin,
       active: 'citas',
       body: `<div class="hero"><div class="hello"><img src="${brand.MASCOT_URL}" alt="" class="float"><div>
-          <span class="eyebrow"><i></i>Citas reservadas por el asistente</span>
-          <h1>Citas de <span class="text-gradient">${esc(clinic.info?.nombre || clinic.name)}</span></h1>
+          <span class="eyebrow"><i></i>${esc(business.typeOf(clinic).Bookings)} reservadas por el asistente</span>
+          <h1>${esc(business.typeOf(clinic).Bookings)} de <span class="text-gradient">${esc(clinic.info?.nombre || clinic.name)}</span></h1>
           <p>Para cambiar o cancelar una cita, hacedlo en vuestro calendario como siempre: aquí se verá reflejado.</p></div></div>
           <div class="stats"><div class="stat"><b>${upcoming.filter((a) => a.status === 'confirmada' && !calendarState.has(a.id)).length}</b><span>próximas confirmadas</span></div>${usageStat(clinic)}</div></div>
         ${calendarNote}
@@ -273,7 +327,7 @@ async function appointmentsView(req, res) {
 // Pacientes / leads: todo el que ha escrito o ha reservado, con su estado,
 // email y notas (lo que añade la recepción se guarda en la tabla leads).
 // ---------------------------------------------------------------------------
-const LEAD_STATUS = { nuevo: 'Nuevo', contactado: 'Contactado', cita: 'Cita reservada', perdido: 'Perdido' };
+const LEAD_STATUS = { nuevo: 'Nuevo', contactado: 'Contactado', cita: 'Reservó', perdido: 'Perdido' };
 
 function leadsOf(clinic) {
   const phones = db
@@ -352,7 +406,7 @@ function leadsView(req, res) {
             <label>Estado<select name="status"><option value="">Automático (${esc(LEAD_STATUS[l.booked ? 'cita' : 'nuevo'])})</option>${Object.entries(LEAD_STATUS)
               .map(([k, v]) => `<option value="${k}"${l.manual && l.status === k ? ' selected' : ''}>${v}</option>`)
               .join('')}</select></label>
-            <label>Email<input type="email" name="email" maxlength="200" value="${esc(l.email)}" placeholder="paciente@email.com"></label>
+            <label>Email<input type="email" name="email" maxlength="200" value="${esc(l.email)}" placeholder="cliente@email.com"></label>
             <label class="wide">Notas<textarea name="notes" maxlength="2000" placeholder="Ej.: llamar el lunes, interesado en ortodoncia…">${esc(l.notes)}</textarea></label>
             <input type="hidden" name="back" value="${esc(req.originalUrl)}">
             <button class="btn b-blue" type="submit">Guardar</button>
@@ -363,15 +417,15 @@ function leadsView(req, res) {
     .join('');
   res.send(
     layout({
-      title: 'Pacientes',
+      title: business.typeOf(clinic).Customers,
       clinic,
       base,
       isAdmin: req.isAdmin,
       active: 'pacientes',
       flash: flashFrom(req.query),
       body: `<div class="hero"><div class="hello"><img src="${brand.MASCOT_URL}" alt="" class="float"><div>
-          <span class="eyebrow"><i></i>Pacientes y leads</span>
-          <h1>Pacientes de <span class="text-gradient">${esc(clinic.info?.nombre || clinic.name)}</span></h1>
+          <span class="eyebrow"><i></i>${esc(business.typeOf(clinic).Customers)} y leads</span>
+          <h1>${esc(business.typeOf(clinic).Customers)} de <span class="text-gradient">${esc(clinic.info?.nombre || clinic.name)}</span></h1>
           <p>Todos los que han escrito por WhatsApp. Marca su estado y añade notas para el seguimiento.</p></div></div>
           <div class="stats"><div class="stat"><b>${all.length}</b><span>contactos</span></div><div class="stat"><b>${counts.cita}</b><span>con cita</span></div></div></div>
         <form method="get" action="${base}/pacientes" class="filters">
@@ -382,7 +436,7 @@ function leadsView(req, res) {
           <button class="btn b-blue" type="submit">Buscar</button>
           ${q || st ? `<a class="btn b-sec" href="${base}/pacientes">Quitar filtros</a>` : ''}
         </form>
-        <div class="card">${rows || `<div class="empty" style="padding:26px;text-align:center;color:var(--text-muted)">${q || st ? 'Nadie coincide con la búsqueda.' : 'Todavía no ha escrito ningún paciente.'}</div>`}</div>`,
+        <div class="card">${rows || `<div class="empty" style="padding:26px;text-align:center;color:var(--text-muted)">${q || st ? 'Nadie coincide con la búsqueda.' : `Todavía no ha escrito ningún ${esc(business.typeOf(clinic).customer)}.`}</div>`}</div>`,
     })
   );
 }
@@ -428,7 +482,7 @@ function chatList(req, res) {
       body: `<div class="hero"><div class="hello"><img src="${brand.MASCOT_URL}" alt="" class="float"><div>
           <span class="eyebrow live"><i></i>Asistente atendiendo · se actualiza solo</span>
           <h1>Conversaciones de <span class="text-gradient">${esc(clinic.info?.nombre || clinic.name)}</span></h1>
-          <p>Lo que hablan tus pacientes con el asistente. Entra en un chat para pausarlo o responder tú.</p></div></div>
+          <p>Lo que hablan tus ${esc(business.typeOf(clinic).customers)} con el asistente. Entra en un chat para pausarlo o responder tú.</p></div></div>
           <div class="stats">${usageStat(clinic)}<div class="stat"><b>${chats.length}</b><span>chats</span></div><div class="stat"><b>${chats.filter((c) => c.paused).length}</b><span>con el asistente pausado</span></div></div></div>
         <div class="legend"><span><i class="dot" style="background:#fff;border:1px solid #ccc"></i>Paciente</span><span><i class="dot" style="background:#DCE9FD"></i>🤖 Asistente</span><span><i class="dot" style="background:#D9FDD3"></i>👤 Recepción</span></div>
         <div class="card">${rows || `<div class="empty">${brand.mascot('Todavía no hay conversaciones. En cuanto un paciente escriba al WhatsApp de la clínica, aparecerá aquí.', { size: 110 })}</div>`}</div>
@@ -525,6 +579,7 @@ function mount(prefix, access) {
   router.post(`${prefix}/chat/:phone/reactivar`, access, resume);
   router.post(`${prefix}/chat/:phone/enviar`, access, form, send);
   router.get(`${prefix}/citas`, access, (req, res, next) => appointmentsView(req, res).catch(next));
+  router.post(`${prefix}/citas/:reqId`, access, form, updateRequest);
   router.get(`${prefix}/pacientes`, access, leadsView);
   router.post(`${prefix}/pacientes/:phone`, access, form, saveLead);
 }
