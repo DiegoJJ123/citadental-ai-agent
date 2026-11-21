@@ -6,7 +6,16 @@ const OpenAI = require('openai');
 const MAX_PAGES = 6;
 const MAX_CHARS_PER_PAGE = 12000;
 const MAX_TOTAL_CHARS = 45000;
-const USEFUL_LINK = /tratamiento|servicio|precio|tarifa|contact|horario|clinica|clínica|equipo|nosotros|financ|seguro|mutua|aseguradora|ubicaci|como-llegar|donde|especialidad|implant|ortodon|estetic|faq|pregunta/i;
+const COMMON_LINK = 'servicio|precio|tarifa|contact|horario|nosotros|ubicaci|como-llegar|donde|faq|pregunta|informaci';
+const USEFUL_LINK_BY_TYPE = {
+  dental: new RegExp(`${COMMON_LINK}|tratamiento|clinica|clínica|equipo|financ|seguro|mutua|aseguradora|especialidad|implant|ortodon|estetic`, 'i'),
+  restaurante: new RegExp(`${COMMON_LINK}|carta|menu|menú|plato|cocina|bebida|vino|postre|alergen|alérgen|reserva|grupo|evento|celebraci|terraza|delivery|domicilio|llevar`, 'i'),
+  otro: new RegExp(`${COMMON_LINK}|producto|catalogo|catálogo|equipo`, 'i'),
+};
+const USEFUL_LINK = USEFUL_LINK_BY_TYPE.dental;
+// PDFs que merece la pena leer (cartas, menús, tarifas).
+const USEFUL_PDF = /carta|menu|menú|tarifa|precio|alergen|alérgen/i;
+const MAX_PDF_BYTES = 6 * 1024 * 1024;
 
 // Campos que guarda la clínica (y que el formulario del paso 2 muestra).
 const INFO_FIELDS = [
@@ -57,6 +66,36 @@ async function fetchPage(url) {
   }
 }
 
+async function fetchPdfText(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const host = new URL(url).hostname;
+    if (/^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.)/i.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) return null;
+    const res = await fetch(url, { signal: ctrl.signal, redirect: 'follow', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CitaDentalAI-Onboarding/1.0)' } });
+    if (!res.ok) return null;
+    const len = Number(res.headers.get('content-length') || 0);
+    if (len > MAX_PDF_BYTES) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > MAX_PDF_BYTES || buf.subarray(0, 5).toString() !== '%PDF-') return null;
+    const { PDFParse } = require('pdf-parse');
+    const parser = new PDFParse({ data: buf });
+    let data;
+    try {
+      data = await parser.getText();
+    } finally {
+      await parser.destroy?.();
+    }
+    const text = String(data?.text || '')
+      .replace(/^-- \d+ of \d+ --$/gm, '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+    return text ? { url, text } : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function htmlToText(html) {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -74,15 +113,21 @@ function htmlToText(html) {
     .trim();
 }
 
-function internalLinks(html, base) {
+function internalLinks(html, base, useful = USEFUL_LINK, pdfs = null) {
   const out = new Set();
   for (const m of html.matchAll(/<a\s[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
     try {
       const u = new URL(m[1], base);
-      if (u.hostname !== base.hostname || !/^https?:$/.test(u.protocol)) continue;
-      if (/\.(pdf|jpe?g|png|gif|webp|svg|zip|mp4)$/i.test(u.pathname)) continue;
+      if (!/^https?:$/.test(u.protocol)) continue;
       const label = m[2].replace(/<[^>]+>/g, ' ');
-      if (USEFUL_LINK.test(u.pathname) || USEFUL_LINK.test(label)) {
+      // Las cartas en PDF suelen estar alojadas fuera (Drive, CDN…): se aceptan de cualquier dominio.
+      if (/\.pdf$/i.test(u.pathname)) {
+        if (pdfs && (USEFUL_PDF.test(u.pathname) || USEFUL_PDF.test(label))) pdfs.add(u.toString());
+        continue;
+      }
+      if (u.hostname !== base.hostname) continue;
+      if (/\.(jpe?g|png|gif|webp|svg|zip|mp4)$/i.test(u.pathname)) continue;
+      if (useful.test(u.pathname) || useful.test(label)) {
         u.hash = '';
         out.add(u.toString());
       }
@@ -91,14 +136,23 @@ function internalLinks(html, base) {
   return [...out];
 }
 
-async function crawl(website) {
+async function crawl(website, type = 'dental') {
   const start = normalizeUrl(website);
   const home = await fetchPage(start);
   if (!home) throw new Error('No he podido abrir esa web. Revisa la dirección o rellena los datos a mano.');
   const pages = [{ url: home.url, text: htmlToText(home.html).slice(0, MAX_CHARS_PER_PAGE) }];
-  const links = internalLinks(home.html, new URL(home.url)).filter((l) => l !== home.url).slice(0, MAX_PAGES - 1);
+  const useful = USEFUL_LINK_BY_TYPE[type] || USEFUL_LINK;
+  const pdfs = new Set();
+  const links = internalLinks(home.html, new URL(home.url), useful, pdfs).filter((l) => l !== home.url).slice(0, MAX_PAGES - 1);
   const more = await Promise.all(links.map(fetchPage));
-  for (const p of more) if (p) pages.push({ url: p.url, text: htmlToText(p.html).slice(0, MAX_CHARS_PER_PAGE) });
+  for (const p of more) {
+    if (!p) continue;
+    pages.push({ url: p.url, text: htmlToText(p.html).slice(0, MAX_CHARS_PER_PAGE) });
+    internalLinks(p.html, new URL(p.url), useful, pdfs); // cartas en PDF enlazadas desde «Carta»
+  }
+  // Hasta 3 PDFs útiles (carta, menú, tarifas, alérgenos), delante del resto para que no se queden fuera.
+  const pdfTexts = (await Promise.all([...pdfs].slice(0, 3).map(fetchPdfText))).filter(Boolean);
+  pages.splice(1, 0, ...pdfTexts.map((p) => ({ url: `${p.url} (PDF)`, text: p.text.slice(0, MAX_CHARS_PER_PAGE) })));
   let total = 0;
   return pages.filter((p) => (total += p.text.length) <= MAX_TOTAL_CHARS);
 }
@@ -106,7 +160,7 @@ async function crawl(website) {
 async function extractClinicInfo(website, { openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY }), model, type = 'dental' } = {}) {
   const biz = require('./business').TYPES[type] || require('./business').TYPES.dental;
   const FIELDS = biz.fields;
-  const pages = await crawl(website);
+  const pages = await crawl(website, type);
   const corpus = pages.map((p) => `### Página: ${p.url}\n${p.text}`).join('\n\n');
   const schema = FIELDS.map((f) => `"${f.key}": string  // ${f.label}`).join('\n');
 
@@ -143,4 +197,4 @@ ${biz.extractRules.map((r) => '- ' + r).join('\n')}
   return { info, pagesRead: pages.map((p) => p.url) };
 }
 
-module.exports = { INFO_FIELDS, extractClinicInfo, normalizeUrl, htmlToText, internalLinks };
+module.exports = { INFO_FIELDS, extractClinicInfo, normalizeUrl, htmlToText, internalLinks, crawl };
