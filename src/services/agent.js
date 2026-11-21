@@ -495,7 +495,9 @@ Sobre las ${t.bookings}:
 
   return `Hoy es ${hoy} (hora de España, Europe/Madrid). Usa esta fecha para calcular fechas relativas ("mañana", "el jueves", etc.).
 
-${t.persona(clinicRec.name)} en español de España, con tono cercano, cálido y profesional. Frases cortas, sin tecnicismos. Como mucho un emoji ocasional.
+${t.persona(clinicRec.name)} con tono cercano, cálido y profesional. Frases cortas, sin tecnicismos. Como mucho un emoji ocasional.
+
+IDIOMA: responde siempre en el idioma en que te escriba el ${t.customer}: castellano, gallego (galego), catalán, euskera, portugués, inglés, francés… Si escribe en gallego, contesta en un gallego natural y correcto (normativo). Si mezcla idiomas o no está claro, usa el castellano. Los datos de abajo están en castellano: tradúcelos al responder, sin cambiar precios, horarios ni nombres propios.
 
 ${capacidades}
 
