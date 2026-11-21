@@ -143,7 +143,16 @@ async function crawl(website, type = 'dental') {
   const pages = [{ url: home.url, text: htmlToText(home.html).slice(0, MAX_CHARS_PER_PAGE) }];
   const useful = USEFUL_LINK_BY_TYPE[type] || USEFUL_LINK;
   const pdfs = new Set();
-  const links = internalLinks(home.html, new URL(home.url), useful, pdfs).filter((l) => l !== home.url).slice(0, MAX_PAGES - 1);
+  let links = internalLinks(home.html, new URL(home.url), useful, pdfs).filter((l) => l !== home.url);
+  // Webs con enlaces genéricos («Ver más», «Conócenos»): si hay pocos enlaces
+  // útiles, se completan con otras páginas internas que no sean legales,
+  // tienda o cuenta.
+  if (links.length < 3) {
+    const SKIP = /aviso|legal|cookie|privac|condicion|accesib|carrito|cart|checkout|cuenta|login|account|tienda|shop|producto\/|mapa-web|sitemap|wp-|feed|tag\/|categor|\/blog\/./i;
+    const extra = internalLinks(home.html, new URL(home.url), /./).filter((l) => l !== home.url && !links.includes(l) && !SKIP.test(new URL(l).pathname));
+    links = [...links, ...extra];
+  }
+  links = links.filter((l) => new URL(l).pathname.replace(/\/+$/, '') !== new URL(home.url).pathname.replace(/\/+$/, '')).slice(0, MAX_PAGES - 1);
   const more = await Promise.all(links.map(fetchPage));
   for (const p of more) {
     if (!p) continue;
